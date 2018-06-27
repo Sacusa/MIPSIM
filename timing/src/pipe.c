@@ -37,7 +37,7 @@ void pipe_init()
 
     // initialize caches
     cache_init(&pipe.i_cache, 64, 4);
-    cache_init(&pipe.d_cache, 8, 256);
+    cache_init(&pipe.d_cache, 256, 8);
 
     // initialize fetch stall info
     pipe.fetch_stall = 0;
@@ -149,6 +149,12 @@ void pipe_stage_wb()
 
 void pipe_stage_mem()
 {
+    /* if a dcache miss is in progress, decrement cycles and return */
+    if (pipe.mem_stall > 0) {
+        pipe.mem_stall--;
+        return;
+    }
+
     /* if there is no instruction in this pipeline stage, we are done */
     if (!pipe.mem_op)
         return;
@@ -156,9 +162,21 @@ void pipe_stage_mem()
     /* grab the op out of our input slot */
     Pipe_Op *op = pipe.mem_op;
 
-    uint32_t val = 0;
-    if (op->is_mem)
-        val = mem_read_32(op->mem_addr & ~3);
+    /* dcache fields */
+    uint32_t dcache_tag = op->mem_addr >> 13;
+    uint8_t dcache_set = (op->mem_addr >> 5) & 0xff;
+    uint8_t dcache_offset = (op->mem_addr >> 2) & 0x7;
+    uint16_t dcache_way = 0;
+
+    /* access dcache */
+    if (op->is_mem) {
+        dcache_way = d_cache_load(op->mem_addr);
+        if (dcache_way == pipe.d_cache.NUM_WAY) {
+            return;
+        }
+    }
+
+    uint32_t val = pipe.d_cache.block[dcache_set][dcache_way].data[dcache_offset];
 
     switch (op->opcode) {
         case OP_LW:
@@ -215,7 +233,7 @@ void pipe_stage_mem()
                 case 3: val = (val & 0x00FFFFFF) | ((op->mem_value & 0xFF) << 24); break;
             }
 
-            mem_write_32(op->mem_addr & ~3, val);
+            d_cache_store(op->mem_addr & ~3, val);
             break;
 
         case OP_SH:
@@ -230,12 +248,12 @@ void pipe_stage_mem()
             printf("new word %08x\n", val);
 #endif
 
-            mem_write_32(op->mem_addr & ~3, val);
+            d_cache_store(op->mem_addr & ~3, val);
             break;
 
         case OP_SW:
             val = op->mem_value;
-            mem_write_32(op->mem_addr & ~3, val);
+            d_cache_store(op->mem_addr & ~3, val);
             break;
     }
 
@@ -690,11 +708,11 @@ void pipe_stage_fetch()
         return;
 
     uint32_t icache_tag = pipe.PC >> 11;
-    uint8_t icache_set = (pipe.PC >> 5) & 0x3f;
+    uint16_t icache_set = (pipe.PC >> 5) & 0x3f;
     uint8_t icache_offset = (pipe.PC >> 2) & 0x7;
     uint16_t icache_way = cache_get_way(&pipe.i_cache, icache_set, icache_tag);
 
-    /* served icache miss */
+    /* serve icache miss */
     if (pipe.is_fetch_stalled) {
         pipe.is_fetch_stalled = 0;
 
@@ -713,7 +731,11 @@ void pipe_stage_fetch()
         pipe.fetch_stall = 50;
         pipe.is_fetch_stalled = 1;
         return;
-    }    
+    }
+    /* update LRU state on hit */
+    else {
+        cache_update_lru_state(&pipe.i_cache, icache_set, icache_way);
+    }
 
     /* Allocate an op and send it down the pipeline. */
     Pipe_Op *op = malloc(sizeof(Pipe_Op));
@@ -727,4 +749,68 @@ void pipe_stage_fetch()
     pipe.PC += 4;
 
     stat_inst_fetch++;
+}
+
+uint16_t d_cache_load(uint32_t mem_addr)
+{
+    /* dcache fields */
+    uint32_t dcache_tag = mem_addr >> 13;
+    uint16_t dcache_set = (mem_addr >> 5) & 0xff;
+    uint8_t dcache_offset = (mem_addr >> 2) & 0x7;
+    uint16_t dcache_way = cache_get_way(&pipe.d_cache, dcache_set, dcache_tag);
+
+    /* serve dcache miss */
+    if (pipe.is_mem_stalled) {
+        pipe.is_mem_stalled = 0;
+        dcache_way = cache_find_victim(&pipe.d_cache, dcache_set);
+
+        /* perform writeback if block is dirty */
+        writeback_if_dirty(dcache_set, dcache_way);
+
+        /* access main memory */
+        uint32_t dcache_data[BLOCK_SIZE];
+        uint32_t address_mask = ~(3 + ((BLOCK_SIZE - 1) << 2));
+        for (uint8_t index = 0; index < BLOCK_SIZE; ++index) {
+            dcache_data[index] = mem_read_32((mem_addr & address_mask) + (index << 2));
+        }
+        
+        cache_insert_data(&pipe.d_cache, dcache_set, dcache_way, dcache_tag, dcache_data);
+    }
+
+    /* stall on dcache miss */
+    if (dcache_way == pipe.d_cache.NUM_WAY) {
+        pipe.mem_stall = 50;
+        pipe.is_mem_stalled = 1;
+    }
+    /* update LRU state on hit */
+    else {
+        cache_update_lru_state(&pipe.d_cache, dcache_set, dcache_way);
+    }
+
+    return dcache_way;
+}
+
+void d_cache_store(uint32_t mem_addr, uint32_t data)
+{
+    /* dcache fields */
+    uint32_t dcache_tag = mem_addr >> 13;
+    uint8_t dcache_set = (mem_addr >> 5) & 0xff;
+    uint8_t dcache_offset = (mem_addr >> 2) & 0x7;
+    uint16_t dcache_way = cache_get_way(&pipe.d_cache, dcache_set, dcache_tag);
+
+    pipe.d_cache.block[dcache_set][dcache_way].dirty = 1;
+    pipe.d_cache.block[dcache_set][dcache_way].data[dcache_offset] = data;
+}
+
+void writeback_if_dirty(uint16_t set, uint16_t way)
+{
+    if (pipe.d_cache.block[set][way].dirty) {
+
+        pipe.d_cache.block[set][way].dirty = 0;
+        uint32_t base_address = (pipe.d_cache.block[set][way].tag << 13) + (set << 5);
+
+        for (uint8_t offset = 0; offset < BLOCK_SIZE; ++offset) {
+            mem_write_32(base_address + (offset << 2), pipe.d_cache.block[set][way].data[offset]);
+        }
+    }
 }
