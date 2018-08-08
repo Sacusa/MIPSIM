@@ -1,8 +1,10 @@
 #ifndef _BLOCK_H_
 #define _BLOCK_H_
 
-#define BLOCK_SIZE 8
 #include <stdint.h>
+
+#define BLOCK_SIZE 8
+#define LOG2_BLOCK_SIZE 3
 
 typedef struct Block {
     uint8_t valid, dirty;

@@ -36,8 +36,8 @@ void pipe_init()
     pipe.PC = 0x00400000;
 
     // initialize caches
-    cache_init(&pipe.i_cache, 64, 4);
-    cache_init(&pipe.d_cache, 256, 8);
+    cache_init(&pipe.l1i_cache, 64, 4);
+    cache_init(&pipe.l1d_cache, 256, 8);
 
     // initialize fetch stall info
     pipe.fetch_stall = 0;
@@ -67,6 +67,7 @@ void pipe_cycle()
         printf("branch recovery: new dest %08x flush %d stages\n", pipe.branch_dest, pipe.branch_flush);
 #endif
 
+        // "unstall" the fetch stage on misprediction
         if (pipe.PC != pipe.branch_dest) {
             pipe.fetch_stall = 0;
             pipe.is_fetch_stalled = 0;
@@ -162,21 +163,15 @@ void pipe_stage_mem()
     /* grab the op out of our input slot */
     Pipe_Op *op = pipe.mem_op;
 
-    /* dcache fields */
-    uint32_t dcache_tag = op->mem_addr >> 13;
-    uint8_t dcache_set = (op->mem_addr >> 5) & 0xff;
-    uint8_t dcache_offset = (op->mem_addr >> 2) & 0x7;
-    uint16_t dcache_way = 0;
+    uint32_t val = 0;
 
     /* access dcache */
     if (op->is_mem) {
-        dcache_way = d_cache_load(op->mem_addr);
-        if (dcache_way == pipe.d_cache.NUM_WAY) {
+        val = d_cache_load(op->mem_addr);
+        if (pipe.is_mem_stalled) {
             return;
         }
     }
-
-    uint32_t val = pipe.d_cache.block[dcache_set][dcache_way].data[dcache_offset];
 
     switch (op->opcode) {
         case OP_LW:
@@ -704,44 +699,22 @@ void pipe_stage_fetch()
     }
     
     /* if pipeline is stalled (our output slot is not empty), return */
-    if (pipe.decode_op != NULL)
+    if (pipe.decode_op != NULL) {
         return;
+    }
+    
+    uint32_t next_instruction = i_cache_load();
 
-    uint32_t icache_tag = pipe.PC >> 11;
-    uint16_t icache_set = (pipe.PC >> 5) & 0x3f;
-    uint8_t icache_offset = (pipe.PC >> 2) & 0x7;
-    uint16_t icache_way = cache_get_way(&pipe.i_cache, icache_set, icache_tag);
-
-    /* serve icache miss */
+    /* return on cache miss */
     if (pipe.is_fetch_stalled) {
-        pipe.is_fetch_stalled = 0;
-
-        /* access main memory */
-        uint32_t icache_data[BLOCK_SIZE];
-        for (uint8_t index = 0; index < BLOCK_SIZE; ++index) {
-            icache_data[index] = mem_read_32(pipe.PC + (index * 4));
-        }
-        
-        icache_way = cache_find_victim(&pipe.i_cache, icache_set);
-        cache_insert_data(&pipe.i_cache, icache_set, icache_way, icache_tag, icache_data);
-    }
-
-    /* stall on icache miss */
-    if (icache_way == pipe.i_cache.NUM_WAY) {
-        pipe.fetch_stall = 50;
-        pipe.is_fetch_stalled = 1;
         return;
-    }
-    /* update LRU state on hit */
-    else {
-        cache_update_lru_state(&pipe.i_cache, icache_set, icache_way);
     }
 
     /* Allocate an op and send it down the pipeline. */
     Pipe_Op *op = malloc(sizeof(Pipe_Op));
     memset(op, 0, sizeof(Pipe_Op));
     op->reg_src1 = op->reg_src2 = op->reg_dst = -1;
-    op->instruction = pipe.i_cache.block[icache_set][icache_way].data[icache_offset];
+    op->instruction = next_instruction;
     op->pc = pipe.PC;
     pipe.decode_op = op;
 
@@ -751,66 +724,109 @@ void pipe_stage_fetch()
     stat_inst_fetch++;
 }
 
-uint16_t d_cache_load(uint32_t mem_addr)
+
+uint32_t i_cache_load()
 {
-    /* dcache fields */
-    uint32_t dcache_tag = mem_addr >> 13;
-    uint16_t dcache_set = (mem_addr >> 5) & 0xff;
-    uint8_t dcache_offset = (mem_addr >> 2) & 0x7;
-    uint16_t dcache_way = cache_get_way(&pipe.d_cache, dcache_set, dcache_tag);
+    uint32_t l1i_cache_tag = pipe.PC >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1I_LOG2_NUM_SETS);
+    uint16_t l1i_cache_set = (pipe.PC >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) & (L1I_NUM_SETS - 1);
+    uint8_t l1i_cache_offset = (pipe.PC >> LOG2_WORD_SIZE) & (BLOCK_SIZE - 1);
+    uint16_t l1i_cache_way = cache_get_way(&pipe.l1i_cache, l1i_cache_set, l1i_cache_tag);
 
-    /* serve dcache miss */
-    if (pipe.is_mem_stalled) {
-        pipe.is_mem_stalled = 0;
-        dcache_way = cache_find_victim(&pipe.d_cache, dcache_set);
-
-        /* perform writeback if block is dirty */
-        writeback_if_dirty(dcache_set, dcache_way);
+    /* serve L1I cache miss */
+    if (pipe.is_fetch_stalled) {
+        pipe.is_fetch_stalled = 0;
 
         /* access main memory */
-        uint32_t dcache_data[BLOCK_SIZE];
-        uint32_t address_mask = ~(3 + ((BLOCK_SIZE - 1) << 2));
+        uint32_t l1i_cache_data[BLOCK_SIZE];
+        uint32_t address_mask = 0xffffffff << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE);
         for (uint8_t index = 0; index < BLOCK_SIZE; ++index) {
-            dcache_data[index] = mem_read_32((mem_addr & address_mask) + (index << 2));
+            l1i_cache_data[index] = mem_read_32((pipe.PC & address_mask) + \
+                                                (index << LOG2_WORD_SIZE));
         }
         
-        cache_insert_data(&pipe.d_cache, dcache_set, dcache_way, dcache_tag, dcache_data);
+        l1i_cache_way = cache_find_victim(&pipe.l1i_cache, l1i_cache_set);
+        cache_insert_data(&pipe.l1i_cache, l1i_cache_set, l1i_cache_way, l1i_cache_tag, \
+                          l1i_cache_data);
     }
 
-    /* stall on dcache miss */
-    if (dcache_way == pipe.d_cache.NUM_WAY) {
-        pipe.mem_stall = 50;
-        pipe.is_mem_stalled = 1;
+    /* stall on L1I cache miss */
+    if (l1i_cache_way == pipe.l1i_cache.NUM_WAY) {
+        pipe.fetch_stall = L1I_MISS_STALL_CYCLE_COUNT;
+        pipe.is_fetch_stalled = 1;
+        return 0;
     }
     /* update LRU state on hit */
     else {
-        cache_update_lru_state(&pipe.d_cache, dcache_set, dcache_way);
+        cache_update_lru_state(&pipe.l1i_cache, l1i_cache_set, l1i_cache_way);
     }
 
-    return dcache_way;
+    return pipe.l1i_cache.block[l1i_cache_set][l1i_cache_way].data[l1i_cache_offset];
+}
+
+uint32_t d_cache_load(uint32_t mem_addr)
+{
+    /* L1D cache fields */
+    uint32_t l1d_cache_tag = mem_addr >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1D_LOG2_NUM_SETS);
+    uint16_t l1d_cache_set = (mem_addr >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) & (L1D_NUM_SETS - 1);
+    uint8_t l1d_cache_offset = (mem_addr >> LOG2_WORD_SIZE) & (BLOCK_SIZE - 1);
+    uint16_t l1d_cache_way = cache_get_way(&pipe.l1d_cache, l1d_cache_set, l1d_cache_tag);
+
+    /* serve L1D cache miss */
+    if (pipe.is_mem_stalled) {
+        pipe.is_mem_stalled = 0;
+        l1d_cache_way = cache_find_victim(&pipe.l1d_cache, l1d_cache_set);
+
+        /* perform writeback if block is dirty */
+        writeback_if_dirty(l1d_cache_set, l1d_cache_way);
+
+        /* access main memory */
+        uint32_t l1d_cache_data[BLOCK_SIZE];
+        uint32_t address_mask = ~(3 + ((BLOCK_SIZE - 1) << LOG2_WORD_SIZE));
+        for (uint8_t index = 0; index < BLOCK_SIZE; ++index) {
+            l1d_cache_data[index] = mem_read_32((mem_addr & address_mask) + \
+                                                (index << LOG2_WORD_SIZE));
+        }
+        
+        cache_insert_data(&pipe.l1d_cache, l1d_cache_set, l1d_cache_way, l1d_cache_tag, l1d_cache_data);
+    }
+
+    /* stall on L1D cache miss */
+    if (l1d_cache_way == pipe.l1d_cache.NUM_WAY) {
+        pipe.mem_stall = 50;
+        pipe.is_mem_stalled = 1;
+        return 0;
+    }
+    /* update LRU state on hit */
+    else {
+        cache_update_lru_state(&pipe.l1d_cache, l1d_cache_set, l1d_cache_way);
+    }
+
+    return pipe.l1d_cache.block[l1d_cache_set][l1d_cache_way].data[l1d_cache_offset];
 }
 
 void d_cache_store(uint32_t mem_addr, uint32_t data)
 {
-    /* dcache fields */
-    uint32_t dcache_tag = mem_addr >> 13;
-    uint8_t dcache_set = (mem_addr >> 5) & 0xff;
-    uint8_t dcache_offset = (mem_addr >> 2) & 0x7;
-    uint16_t dcache_way = cache_get_way(&pipe.d_cache, dcache_set, dcache_tag);
+    /* L1D cache fields */
+    uint32_t l1d_cache_tag = mem_addr >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1D_LOG2_NUM_SETS);
+    uint16_t l1d_cache_set = (mem_addr >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) & (L1D_NUM_SETS - 1);
+    uint8_t l1d_cache_offset = (mem_addr >> LOG2_WORD_SIZE) & (BLOCK_SIZE - 1);
+    uint16_t l1d_cache_way = cache_get_way(&pipe.l1d_cache, l1d_cache_set, l1d_cache_tag);
 
-    pipe.d_cache.block[dcache_set][dcache_way].dirty = 1;
-    pipe.d_cache.block[dcache_set][dcache_way].data[dcache_offset] = data;
+    pipe.l1d_cache.block[l1d_cache_set][l1d_cache_way].dirty = 1;
+    pipe.l1d_cache.block[l1d_cache_set][l1d_cache_way].data[l1d_cache_offset] = data;
 }
 
 void writeback_if_dirty(uint16_t set, uint16_t way)
 {
-    if (pipe.d_cache.block[set][way].dirty) {
-
-        pipe.d_cache.block[set][way].dirty = 0;
-        uint32_t base_address = (pipe.d_cache.block[set][way].tag << 13) + (set << 5);
+    if (pipe.l1d_cache.block[set][way].dirty) {
+        pipe.l1d_cache.block[set][way].dirty = 0;
+        uint32_t base_address = (pipe.l1d_cache.block[set][way].tag << \
+                                 (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1D_LOG2_NUM_SETS)) + \
+                                (set << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE));
 
         for (uint8_t offset = 0; offset < BLOCK_SIZE; ++offset) {
-            mem_write_32(base_address + (offset << 2), pipe.d_cache.block[set][way].data[offset]);
+            mem_write_32(base_address + (offset << LOG2_WORD_SIZE), \
+                         pipe.l1d_cache.block[set][way].data[offset]);
         }
     }
 }

@@ -5,6 +5,16 @@
 #include <stdlib.h>
 #include "block.h"
 
+#define WORD_SIZE 4
+#define LOG2_WORD_SIZE 2
+
+#define L1I_NUM_SETS 64
+#define L1I_LOG2_NUM_SETS 6
+#define L1I_MISS_STALL_CYCLE_COUNT 50
+
+#define L1D_NUM_SETS 256
+#define L1D_LOG2_NUM_SETS 8
+
 typedef struct Cache {
     uint16_t NUM_SET, NUM_WAY;
     Block **block;

@@ -92,8 +92,8 @@ typedef struct Pipe_State {
 
     /* place other information here as necessary */
 
-    /* I-Cache and D-Cache */
-    Cache i_cache, d_cache;
+    /* caches */
+    Cache l1i_cache, l1d_cache;
 
     /* cache stall info */
     uint8_t fetch_stall;  // fetch stall on I-Cache miss
@@ -124,11 +124,13 @@ void pipe_stage_execute();
 void pipe_stage_mem();
 void pipe_stage_wb();
 
-/* helper functions for pipe_stage_mem to access dcache */
+/* accesses icache and returns the next instruction.
+   On a miss, sets is_fetch_stalled and returns 0. */
+uint32_t i_cache_load();
 
-/* accesses dcache and returns the way the requested data is in.
- * On a miss, returns -1 until the miss is served. */
-uint16_t d_cache_load(uint32_t mem_addr);
+/* accesses dcache and returns the requested data.
+ * On a miss, sets is_mem_stalled and returns 0. */
+uint32_t d_cache_load(uint32_t mem_addr);
 
 /* write the given data into corresponding cache block */
 void d_cache_store(uint32_t mem_addr, uint32_t data);
