@@ -15,4 +15,4 @@ Usage: sim \<input file\>
 
 For a list of commands, type '?' without the quotes into the prompt.
 
-[labs_link]: https://www.ece.cmu.edu/~ece447/s15/doku.php?id=labs
+[labs_link]: http://www.archive.ece.cmu.edu/~ece447/s15/doku.php?id=labs
