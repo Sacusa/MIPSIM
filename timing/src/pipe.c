@@ -36,12 +36,18 @@ void pipe_init()
     pipe.PC = 0x00400000;
 
     // initialize caches
-    cache_init(&pipe.l1i_cache, 64, 4);
-    cache_init(&pipe.l1d_cache, 256, 8);
+    cache_init(&pipe.l1i_cache, L1I_NUM_SETS, L1I_NUM_WAYS);
+    cache_init(&pipe.l1d_cache, L1D_NUM_SETS, L1D_NUM_WAYS);
 
     // initialize fetch stall info
     pipe.fetch_stall = 0;
     pipe.is_fetch_stalled = 0;
+
+    // initialize mem stall info
+    pipe.mem_stall = 0;
+    pipe.is_mem_stalled = 0;
+
+    init_branch_pred();
 }
 
 void pipe_cycle()
@@ -68,6 +74,8 @@ void pipe_cycle()
 #endif
 
         // "unstall" the fetch stage on misprediction
+        // if ((pipe.PC >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1I_LOG2_NUM_SETS)) != \
+        //     (pipe.branch_dest >> LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1I_LOG2_NUM_SETS)) {
         if (pipe.PC != pipe.branch_dest) {
             pipe.fetch_stall = 0;
             pipe.is_fetch_stalled = 0;
@@ -541,9 +549,38 @@ void pipe_stage_execute()
             break;
     }
 
-    /* handle branch recoveries at this point */
-    if (op->branch_taken)
-        pipe_recover(3, op->branch_dest);
+    /* update branch predictor and perform branch recovery */
+    if (op->is_branch) {
+        /* flush pipeline
+         * cond 1: mispredicted direction
+         * cond 2: if taken, mispredicted target
+         * cond 3: BTB miss
+         */
+        if ((op->branch_taken != op->predicted_branch_taken) || \
+            (op->branch_taken && (op->branch_dest != op->predicted_branch_dest)) || \
+            (!op->predicted_is_branch)) {
+            if (op->branch_taken) {
+                pipe_recover(3, op->branch_dest);
+                printf("Mispredicted branch! PC = %08x    DEST = %08x    COND_BRANCH = %d    BRANCH TAKEN = %d\n", op->pc, op->branch_dest, op->branch_cond, op->branch_taken);
+            }
+            else {
+                pipe_recover(3, op->pc + 4);
+                printf("Mispredicted branch! PC = %08x    DEST = %08x    COND_BRANCH = %d    BRANCH TAKEN = %d\n", op->pc, op->pc+4, op->branch_cond, op->branch_taken);
+            }
+        }
+
+        // update GHR and PHT for conditional branches
+        if (op->branch_cond) {
+            update_gshare(&pipe.gshare_predictor, op->pc, op->branch_taken);
+        }
+
+        // update BTB
+        uint32_t btb_index = get_btb_index(op->pc);
+        pipe.BTB[btb_index].address = op->pc;
+        pipe.BTB[btb_index].branch_target = op->branch_dest;
+        pipe.BTB[btb_index].valid = 1;
+        pipe.BTB[btb_index].is_unconditional = !(op->branch_cond);
+    }
 
     /* remove from upstream stage and place in downstream stage */
     pipe.execute_op = NULL;
@@ -710,6 +747,9 @@ void pipe_stage_fetch()
         return;
     }
 
+    // SACUSA
+    printf("PC = %08x    INSTRUCTION = %08x", pipe.PC, next_instruction);
+
     /* Allocate an op and send it down the pipeline. */
     Pipe_Op *op = malloc(sizeof(Pipe_Op));
     memset(op, 0, sizeof(Pipe_Op));
@@ -719,7 +759,10 @@ void pipe_stage_fetch()
     pipe.decode_op = op;
 
     /* update PC */
-    pipe.PC += 4;
+    pipe.PC = predict_next_PC(op);
+
+    // SACUSA
+    printf("    NEXT_PC = %08x\n\n", pipe.PC);
 
     stat_inst_fetch++;
 }
@@ -792,7 +835,7 @@ uint32_t d_cache_load(uint32_t mem_addr)
 
     /* stall on L1D cache miss */
     if (l1d_cache_way == pipe.l1d_cache.NUM_WAY) {
-        pipe.mem_stall = 50;
+        pipe.mem_stall = L1D_MISS_STALL_CYCLE_COUNT;
         pipe.is_mem_stalled = 1;
         return 0;
     }
@@ -829,4 +872,47 @@ void writeback_if_dirty(uint16_t set, uint16_t way)
                          pipe.l1d_cache.block[set][way].data[offset]);
         }
     }
+}
+
+void init_branch_pred()
+{
+    init_gshare(&pipe.gshare_predictor);
+
+    for (int i = 0; i < BTB_SIZE; ++i) {
+        pipe.BTB[i].address = 0;
+        pipe.BTB[i].branch_target = 0;
+        pipe.BTB[i].valid = 0;
+        pipe.BTB[i].is_unconditional = 0;
+    }
+}
+
+uint32_t get_btb_index(uint32_t PC)
+{
+    return ((PC >> 2) & (BTB_SIZE - 1));
+}
+
+uint32_t predict_next_PC(Pipe_Op *op)
+{
+    uint32_t next_PC = pipe.PC + 4;  // default next predicted PC value
+    op->predicted_branch_taken = 0;
+    op->predicted_is_branch = 0;
+    
+    uint32_t btb_index = get_btb_index(pipe.PC);
+    uint32_t pht_index = get_pht_index(&pipe.gshare_predictor, pipe.PC);
+
+    if ((pipe.BTB[btb_index].address == pipe.PC) && pipe.BTB[btb_index].valid) {
+        op->predicted_is_branch = 1;
+        
+        if (pipe.BTB[btb_index].is_unconditional || (pipe.gshare_predictor.PHT[pht_index] > 1)) {
+            next_PC = pipe.BTB[btb_index].branch_target;
+            op->predicted_branch_taken = 1;
+        }
+    }
+
+    // SACUSA
+    printf("    GHR = %d    PHT = %d", pipe.gshare_predictor.GHR, pipe.gshare_predictor.PHT[pht_index]);
+
+    op->predicted_branch_dest = next_PC;
+
+    return next_PC;
 }

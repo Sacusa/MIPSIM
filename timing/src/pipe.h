@@ -12,6 +12,10 @@
 #include "shell.h"
 #include "block.h"
 #include "cache.h"
+#include "gshare.h"
+#include "btb_entry.h"
+
+#define BTB_SIZE 1024
 
 /* Pipeline ops (instances of this structure) are high-level representations of
  * the instructions that actually flow through the pipeline. This struct does
@@ -57,6 +61,9 @@ typedef struct Pipe_Op {
                              for unconditional, execute for conditional) */
     int is_link;          /* jump-and-link or branch-and-link inst? */
     int link_reg;         /* register to place link into? */
+    int predicted_is_branch;
+    uint32_t predicted_branch_dest;
+    int predicted_branch_taken;
 
 } Pipe_Op;
 
@@ -101,6 +108,10 @@ typedef struct Pipe_State {
     uint8_t mem_stall;    // memory stall on D-Cache miss
     uint8_t is_mem_stalled;
 
+    /* branch predictor info */
+    Gshare gshare_predictor;
+    BTB_Entry BTB[BTB_SIZE];
+
 } Pipe_State;
 
 /* global variable -- pipeline state */
@@ -137,5 +148,14 @@ void d_cache_store(uint32_t mem_addr, uint32_t data);
 
 /* performs writeback for the given block if it is dirty */
 void writeback_if_dirty(uint16_t set, uint16_t way);
+
+/* initializes all branch prediction info */
+void init_branch_pred();
+
+/* returns BTB index for the given PC */
+uint32_t get_btb_index(uint32_t PC);
+
+/* performs branch prediction, updates prediction info in op, and returns the next PC value */
+uint32_t predict_next_PC(Pipe_Op *op);
 
 #endif
