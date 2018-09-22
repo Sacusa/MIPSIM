@@ -31,7 +31,7 @@ void cache_destroy(Cache *cache) {
 uint16_t cache_get_way(Cache *cache, uint16_t set, uint32_t tag) {
     uint16_t way = 0;
     for (way = 0; way < cache->NUM_WAY; ++way) {
-        if ((cache->block[set][way].valid) && (cache->block[set][way].tag == tag)) {
+        if (cache->block[set][way].valid && (cache->block[set][way].tag == tag)) {
             return way;
         }
     }
@@ -61,7 +61,7 @@ uint16_t cache_find_victim(Cache *cache, uint16_t set) {
     }
 
     // LRU victim
-    uint8_t lru_val = cache->NUM_WAY - 1;
+    uint16_t lru_val = cache->NUM_WAY - 1;
     for (way = 0; way < cache->NUM_WAY; ++way) {
         if (cache->block[set][way].lru == lru_val) {
             return way;

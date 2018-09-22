@@ -74,8 +74,6 @@ void pipe_cycle()
 #endif
 
         // "unstall" the fetch stage on misprediction
-        // if ((pipe.PC >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1I_LOG2_NUM_SETS)) != \
-        //     (pipe.branch_dest >> LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1I_LOG2_NUM_SETS)) {
         if (pipe.PC != pipe.branch_dest) {
             pipe.fetch_stall = 0;
             pipe.is_fetch_stalled = 0;
@@ -147,6 +145,7 @@ void pipe_stage_wb()
         if (op->reg_src1_value == 0xA) {
             pipe.PC = op->pc; /* fetch will do pc += 4, then we stop with correct PC */
             RUN_BIT = 0;
+            pipe_stop();  /* close down pipe and free all structures */
         }
     }
 
@@ -561,11 +560,9 @@ void pipe_stage_execute()
             (!op->predicted_is_branch)) {
             if (op->branch_taken) {
                 pipe_recover(3, op->branch_dest);
-                printf("Mispredicted branch! PC = %08x    DEST = %08x    COND_BRANCH = %d    BRANCH TAKEN = %d\n", op->pc, op->branch_dest, op->branch_cond, op->branch_taken);
             }
             else {
                 pipe_recover(3, op->pc + 4);
-                printf("Mispredicted branch! PC = %08x    DEST = %08x    COND_BRANCH = %d    BRANCH TAKEN = %d\n", op->pc, op->pc+4, op->branch_cond, op->branch_taken);
             }
         }
 
@@ -729,6 +726,12 @@ void pipe_stage_decode()
 
 void pipe_stage_fetch()
 {
+    /* if execution halted, increment PC and return */
+    if (!RUN_BIT) {
+        pipe.PC += 4;
+        return;
+    }
+
     /* if an icache miss is in progress, decrement cycles and return */
     if (pipe.fetch_stall > 0) {
         pipe.fetch_stall--;
@@ -747,9 +750,6 @@ void pipe_stage_fetch()
         return;
     }
 
-    // SACUSA
-    printf("PC = %08x    INSTRUCTION = %08x", pipe.PC, next_instruction);
-
     /* Allocate an op and send it down the pipeline. */
     Pipe_Op *op = malloc(sizeof(Pipe_Op));
     memset(op, 0, sizeof(Pipe_Op));
@@ -761,12 +761,14 @@ void pipe_stage_fetch()
     /* update PC */
     pipe.PC = predict_next_PC(op);
 
-    // SACUSA
-    printf("    NEXT_PC = %08x\n\n", pipe.PC);
-
     stat_inst_fetch++;
 }
 
+void pipe_stop()
+{
+    cache_destroy(&pipe.l1i_cache);
+    cache_destroy(&pipe.l1d_cache);
+}
 
 uint32_t i_cache_load()
 {
@@ -824,13 +826,14 @@ uint32_t d_cache_load(uint32_t mem_addr)
 
         /* access main memory */
         uint32_t l1d_cache_data[BLOCK_SIZE];
-        uint32_t address_mask = ~(3 + ((BLOCK_SIZE - 1) << LOG2_WORD_SIZE));
+        uint32_t address_mask = 0xffffffff << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE);
         for (uint8_t index = 0; index < BLOCK_SIZE; ++index) {
             l1d_cache_data[index] = mem_read_32((mem_addr & address_mask) + \
                                                 (index << LOG2_WORD_SIZE));
         }
         
-        cache_insert_data(&pipe.l1d_cache, l1d_cache_set, l1d_cache_way, l1d_cache_tag, l1d_cache_data);
+        cache_insert_data(&pipe.l1d_cache, l1d_cache_set, l1d_cache_way, l1d_cache_tag, \
+                          l1d_cache_data);
     }
 
     /* stall on L1D cache miss */
@@ -861,7 +864,7 @@ void d_cache_store(uint32_t mem_addr, uint32_t data)
 
 void writeback_if_dirty(uint16_t set, uint16_t way)
 {
-    if (pipe.l1d_cache.block[set][way].dirty) {
+    if (pipe.l1d_cache.block[set][way].valid && pipe.l1d_cache.block[set][way].dirty) {
         pipe.l1d_cache.block[set][way].dirty = 0;
         uint32_t base_address = (pipe.l1d_cache.block[set][way].tag << \
                                  (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1D_LOG2_NUM_SETS)) + \
@@ -908,9 +911,6 @@ uint32_t predict_next_PC(Pipe_Op *op)
             op->predicted_branch_taken = 1;
         }
     }
-
-    // SACUSA
-    printf("    GHR = %d    PHT = %d", pipe.gshare_predictor.GHR, pipe.gshare_predictor.PHT[pht_index]);
 
     op->predicted_branch_dest = next_PC;
 

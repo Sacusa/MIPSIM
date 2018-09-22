@@ -135,6 +135,9 @@ void pipe_stage_execute();
 void pipe_stage_mem();
 void pipe_stage_wb();
 
+/* called when RUN_BIT is set to 0; frees all structures */
+void pipe_stop();
+
 /* accesses icache and returns the next instruction.
    On a miss, sets is_fetch_stalled and returns 0. */
 uint32_t i_cache_load();
