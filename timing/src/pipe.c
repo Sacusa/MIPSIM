@@ -36,16 +36,27 @@ void pipe_init()
     pipe.PC = 0x00400000;
 
     // initialize caches
-    cache_init(&pipe.l1i_cache, L1I_NUM_SETS, L1I_NUM_WAYS);
-    cache_init(&pipe.l1d_cache, L1D_NUM_SETS, L1D_NUM_WAYS);
+    cache_init(&pipe.l1i_cache, L1I_NUM_SETS, L1I_NUM_WAYS, L1I_NUM_MSHRS);
+    cache_init(&pipe.l1d_cache, L1D_NUM_SETS, L1D_NUM_WAYS, L1D_NUM_MSHRS);
 
-    // initialize fetch stall info
+    // initialize icache info
+    pipe.icache_state = NOT_STALLED;
     pipe.fetch_stall = 0;
     pipe.is_fetch_stalled = 0;
 
-    // initialize mem stall info
+    // initialize dcache info
+    pipe.dcache_state = NOT_STALLED;
     pipe.mem_stall = 0;
     pipe.is_mem_stalled = 0;
+
+    // initialize instruction load queue
+    pipe.instruction_queue_size = 4;
+    pipe.instruction_queue = (Instruction_Load_Status*) malloc(pipe.instruction_queue_size * \
+                                                                sizeof(Instruction_Load_Status));
+    
+    for (uint8_t i = 0; i < pipe.instruction_queue_size; ++i) {
+        pipe.instruction_queue[i].valid = 0;
+    }
 
     init_branch_pred();
 }
@@ -74,6 +85,7 @@ void pipe_cycle()
 #endif
 
         // "unstall" the fetch stage on misprediction
+        // TODO: CHANGE THIS
         if (pipe.PC != pipe.branch_dest) {
             pipe.fetch_stall = 0;
             pipe.is_fetch_stalled = 0;
@@ -770,7 +782,68 @@ void pipe_stop()
     cache_destroy(&pipe.l1d_cache);
 }
 
-uint32_t i_cache_load()
+uint8_t i_cache_load(uint32_t *data)
+{
+    uint8_t return_val = CACHE_DATA_UNAVAILABLE;
+
+    // assign an instruction queue index to the current PC
+
+    for (uint8_t i = 0; i < pipe.instruction_queue_size; ++i) {
+        switch (pipe.instruction_queue[i].current_state) {
+            case STALLED_ON_DRAM:
+                /* next state: STALLED_ON_DRAM_RESPONSE
+                 * stall: DRAM_TO_L2C_LATENCY
+                 * update mshr
+                 */
+                break;
+            case STALLED_ON_DRAM_REQUEST:
+                /* next_state: STALLED_ON_DRAM
+                 * stall: DRAM_ACCESS_LATENCY
+                 */
+                break;
+            case STALLED_ON_DRAM_RESPONSE:
+                /* next_state: NOT_STALLED
+                 * stall: 0
+                 * fill into L2C
+                 * free MSHR
+                 * if i == index of PC entry
+                 *   fill into L1I
+                 *   update 'data'
+                 *   return_val = CACHE_DATA_AVAILABLE
+                 */
+                break;
+            case STALLED_ON_L2C_HIT:
+                /* next_state: NOT_STALLED
+                 * stall: 0
+                 * if i == index of PC entry
+                 *   fill into L1I
+                 *   update 'data'
+                 *   return_val = CACHE_DATA_AVAILABLE
+                 */
+                break;
+            case NOT_STALLED:
+                /* access L1I
+                * if L1I miss
+                *   access L2C
+                *   if L2C miss
+                *     create MSHR entry
+                *     next_state: STALLED_ON_DRAM_REQUEST
+                *     stall: L2C_TO_DRAM_LATENCY
+                *     return CACHE_DATA_UNAVAILABLE
+                *   else
+                *     next_state: STALLED_ON_L2C_HIT
+                *     stall: L2C_HIT_LATENCY
+                *     return CACHE_DATA_UNAVAILABLE
+                * else
+                *   update 'data'
+                *   return CACHE_DATA_AVAILABLE
+                */
+                break;
+        }
+    }
+}
+
+uint8_t l1i_cache_load(uint32_t *data)
 {
     uint32_t l1i_cache_tag = pipe.PC >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1I_LOG2_NUM_SETS);
     uint16_t l1i_cache_set = (pipe.PC >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) & (L1I_NUM_SETS - 1);
@@ -783,11 +856,14 @@ uint32_t i_cache_load()
 
         /* access main memory */
         uint32_t l1i_cache_data[BLOCK_SIZE];
-        uint32_t address_mask = 0xffffffff << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE);
-        for (uint8_t index = 0; index < BLOCK_SIZE; ++index) {
-            l1i_cache_data[index] = mem_read_32((pipe.PC & address_mask) + \
-                                                (index << LOG2_WORD_SIZE));
-        }
+        // uint32_t address_mask = 0xffffffff << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE);
+        // for (uint8_t index = 0; index < BLOCK_SIZE; ++index) {
+        //     l1i_cache_data[index] = mem_read_32((pipe.PC & address_mask) + \
+        //                                         (index << LOG2_WORD_SIZE));
+        // }
+
+        /* access L2 cache */
+        // TODO
         
         l1i_cache_way = cache_find_victim(&pipe.l1i_cache, l1i_cache_set);
         cache_insert_data(&pipe.l1i_cache, l1i_cache_set, l1i_cache_way, l1i_cache_tag, \
@@ -795,6 +871,7 @@ uint32_t i_cache_load()
     }
 
     /* stall on L1I cache miss */
+    /* return error code on L1I miss */
     if (l1i_cache_way == pipe.l1i_cache.NUM_WAY) {
         pipe.fetch_stall = L1I_MISS_STALL_CYCLE_COUNT;
         pipe.is_fetch_stalled = 1;

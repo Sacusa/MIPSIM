@@ -1,8 +1,21 @@
 #include "cache.h"
 
-void cache_init (Cache *cache, uint16_t num_set, uint16_t num_way) {
+void cache_init (Cache *cache, uint16_t num_set, uint16_t num_way, uint16_t num_mshr) {
     cache->NUM_SET = num_set;
     cache->NUM_WAY = num_way;
+    cache->NUM_MSHR = num_mshr;
+
+    if (num_mshr > 0) {
+        /* allocate and initialize mshrs */
+        cache->mshr = (MSHR*) malloc(num_mshr * sizeof(MSHR));
+
+        for (uint16_t i = 0; i < num_mshr; ++i) {
+            cache->mshr[i].valid = 0;
+            cache->mshr[i].done = 0;
+            cache->mshr[i].address = 0;
+        }
+    }
+
     cache->block = (Block**) malloc(num_set * sizeof(Block*));
 
     for (uint16_t set = 0; set < num_set; ++set) {
@@ -26,6 +39,7 @@ void cache_destroy(Cache *cache) {
         free(cache->block[set]);
     }
     free(cache->block);
+    free(cache->mshr);
 }
 
 uint16_t cache_get_way(Cache *cache, uint16_t set, uint32_t tag) {
@@ -80,4 +94,40 @@ void cache_update_lru_state(Cache *cache, uint16_t set, uint16_t way) {
     }
 
     cache->block[set][way].lru = 0;
+}
+
+uint16_t allocate_mshr(Cache *cache, uint32_t address) {
+    uint16_t mshr_index;
+
+    /* look for an empty MSHR */
+    for (mshr_index = 0; mshr_index < cache->NUM_MSHR; ++mshr_index) {
+        if (!cache->mshr[mshr_index].valid) {
+            break;
+        }
+    }
+
+    /* if empty MSHR found, fill it */
+    if (mshr_index != cache->NUM_MSHR) {
+        cache->mshr[mshr_index].valid = 1;
+        cache->mshr[mshr_index].done = 0;
+        cache->mshr[mshr_index].address = address;
+    }
+
+    return mshr_index;
+}
+
+void mark_mshr_done(Cache *cache, uint32_t address) {
+    for (uint16_t mshr_index = 0; mshr_index < cache->NUM_MSHR; ++mshr_index) {
+        if (cache->mshr[mshr_index].address == address) {
+            cache->mshr[mshr_index].done = 1;
+        }
+    }
+}
+
+void invalidate_mshr(Cache *cache, uint32_t address) {
+    for (uint16_t mshr_index = 0; mshr_index < cache->NUM_MSHR; ++mshr_index) {
+        if (cache->mshr[mshr_index].address == address) {
+            cache->mshr[mshr_index].valid = 0;
+        }
+    }
 }

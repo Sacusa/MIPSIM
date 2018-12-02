@@ -9,11 +9,12 @@
 #ifndef _PIPE_H_
 #define _PIPE_H_
 
-#include "shell.h"
 #include "block.h"
+#include "btb_entry.h"
 #include "cache.h"
 #include "gshare.h"
-#include "btb_entry.h"
+#include "instruction_load_status.h"
+#include "shell.h"
 
 #define BTB_SIZE 1024
 
@@ -61,9 +62,9 @@ typedef struct Pipe_Op {
                              for unconditional, execute for conditional) */
     int is_link;          /* jump-and-link or branch-and-link inst? */
     int link_reg;         /* register to place link into? */
-    int predicted_is_branch;
-    uint32_t predicted_branch_dest;
-    int predicted_branch_taken;
+    int predicted_is_branch;        /* predictor: is this a branch? */
+    uint32_t predicted_branch_dest; /* predictor: branch destination (if taken) */
+    int predicted_branch_taken;     /* predictor: branch taken? */
 
 } Pipe_Op;
 
@@ -90,9 +91,9 @@ typedef struct Pipe_State {
     /* information for PC update (branch recovery). Branches should use this
      * mechanism to redirect the fetch stage, and flush the ops that came after
      * the branch as necessary. */
-    int branch_recover; /* set to '1' to load a new PC */
+    int branch_recover;   /* set to '1' to load a new PC */
     uint32_t branch_dest; /* next fetch will be from this PC */
-    int branch_flush; /* how many stages to flush during recover? (1 = fetch, 2 = fetch/decode, ...) */
+    int branch_flush;     /* how many stages to flush during recover? (1 = fetch, 2 = fetch/decode, ...) */
 
     /* multiplier stall info */
     int multiplier_stall; /* number of remaining cycles until HI/LO are ready */
@@ -102,15 +103,21 @@ typedef struct Pipe_State {
     /* caches */
     Cache l1i_cache, l1d_cache;
 
-    /* cache stall info */
-    uint8_t fetch_stall;  // fetch stall on I-Cache miss
+    /* cache state info */
+    uint8_t icache_state; /* current state of icache (defined in cache.h) */
+    uint8_t fetch_stall;  /* number of cycles fetch is stalled on I-Cache miss */
     uint8_t is_fetch_stalled;
-    uint8_t mem_stall;    // memory stall on D-Cache miss
+    uint8_t dcache_state; /* current state of dcache (defined in cache.h) */
+    uint8_t mem_stall;    /* number of cycles memory is stalled on D-Cache miss */
     uint8_t is_mem_stalled;
 
     /* branch predictor info */
     Gshare gshare_predictor;
     BTB_Entry BTB[BTB_SIZE];
+
+    /* load/store queues */
+    uint8_t instruction_queue_size;
+    Instruction_Load_Status *instruction_queue;
 
 } Pipe_State;
 
@@ -140,7 +147,7 @@ void pipe_stop();
 
 /* accesses icache and returns the next instruction.
    On a miss, sets is_fetch_stalled and returns 0. */
-uint32_t i_cache_load();
+uint8_t i_cache_load(uint32_t *data);
 
 /* accesses dcache and returns the requested data.
  * On a miss, sets is_mem_stalled and returns 0. */
