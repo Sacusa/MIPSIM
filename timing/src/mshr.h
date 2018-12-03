@@ -4,10 +4,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-typedef struct MSHR {
+typedef struct MSHR
+{
     uint8_t valid;
     uint8_t done;
-    uint32_t address;  // address of the cache block that triggered the miss
+    uint32_t address; /* address of the cache block that triggered the miss */
 } MSHR;
 
 #endif

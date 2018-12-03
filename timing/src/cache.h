@@ -10,15 +10,15 @@
 #define LOG2_WORD_SIZE 2
 
 /* cache access return code */
-#define CACHE_DATA_AVAILABLE   0
+#define CACHE_DATA_AVAILABLE 0
 #define CACHE_DATA_UNAVAILABLE 1
 
 /* cache stall stages */
-#define STALLED_ON_DRAM          0
-#define STALLED_ON_DRAM_REQUEST  1
+#define STALLED_ON_DRAM 0
+#define STALLED_ON_DRAM_REQUEST 1
 #define STALLED_ON_DRAM_RESPONSE 2
-#define STALLED_ON_L2C_HIT       3
-#define NOT_STALLED              4
+#define STALLED_ON_L2C_HIT 3
+#define NOT_STALLED 4
 
 /* L1I cache information */
 #define L1I_NUM_SETS 64
@@ -43,7 +43,8 @@
 #define L2C_TO_DRAM_LATENCY 5
 #define DRAM_TO_L2C_LATENCY 5
 
-typedef struct Cache {
+typedef struct Cache
+{
     uint16_t NUM_SET, NUM_WAY, NUM_MSHR;
     Block **block;
     MSHR *mshr;
@@ -59,7 +60,7 @@ void cache_destroy(Cache *cache);
 uint16_t cache_get_way(Cache *cache, uint16_t set, uint32_t tag);
 
 /* insert data into the specified set and way and update LRU state */
-void cache_insert_data(Cache *cache, uint16_t set, uint16_t way, uint32_t tag, \
+void cache_insert_data(Cache *cache, uint16_t set, uint16_t way, uint32_t tag,
                        uint32_t data[BLOCK_SIZE]);
 
 /* find victim for replacement */

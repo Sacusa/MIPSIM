@@ -3,8 +3,9 @@
 void init_gshare(Gshare *gshare)
 {
     gshare->GHR = 0;
-    
-    for (int i = 0; i < PHT_SIZE; ++i) {
+
+    for (int i = 0; i < PHT_SIZE; ++i)
+    {
         gshare->PHT[i] = 0;
     }
 }
@@ -18,10 +19,12 @@ void update_gshare(Gshare *gshare, uint32_t PC, uint8_t is_taken)
 {
     uint32_t pht_index = get_pht_index(gshare, PC);
 
-    if (is_taken) {
+    if (is_taken)
+    {
         gshare->PHT[pht_index] += (gshare->PHT[pht_index] == 3 ? 0 : 1);
     }
-    else {
+    else
+    {
         gshare->PHT[pht_index] -= (gshare->PHT[pht_index] == 0 ? 0 : 1);
     }
 

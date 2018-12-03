@@ -5,9 +5,10 @@
 
 #define PHT_SIZE 256
 
-typedef struct Gshare {
-    uint8_t GHR;            /* Global History Register */
-    uint8_t PHT[PHT_SIZE];  /* Pattern History Table */
+typedef struct Gshare
+{
+    uint8_t GHR;           /* Global History Register */
+    uint8_t PHT[PHT_SIZE]; /* Pattern History Table */
 } Gshare;
 
 /* initializes all predictor structures to 0 */

@@ -3,7 +3,8 @@
 
 #include <stdint.h>
 
-typedef struct BTB_Entry {
+typedef struct BTB_Entry
+{
     uint32_t address;
     uint32_t branch_target;
     uint8_t valid;
