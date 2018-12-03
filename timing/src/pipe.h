@@ -157,8 +157,11 @@ uint32_t d_cache_load(uint32_t mem_addr);
 /* write the given data into corresponding cache block */
 void d_cache_store(uint32_t mem_addr, uint32_t data);
 
-/* performs writeback for the given block if it is dirty */
-void writeback_if_dirty(uint16_t set, uint16_t way);
+/* performs writeback for the given L1D cache block if it is dirty */
+void l1d_writeback_if_dirty(uint16_t set, uint16_t way);
+
+/* performs writeback for the given L2 cache block if it is dirty */
+void l2_writeback_if_dirty(uint16_t set, uint16_t way);
 
 /* initializes all branch prediction info */
 void init_branch_pred();

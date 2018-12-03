@@ -41,11 +41,6 @@ void pipe_init()
     cache_init(&pipe.l1d_cache, L1D_NUM_SETS, L1D_NUM_WAYS, L1D_NUM_MSHRS);
     cache_init(&pipe.l2_cache, L2C_NUM_SETS, L2C_NUM_WAYS, L2C_NUM_MSHRS);
 
-    /* initialize icache info */
-    pipe.icache_state = NOT_STALLED;
-    pipe.fetch_stall = 0;
-    pipe.is_fetch_stalled = 0;
-
     /* initialize dcache info */
     pipe.dcache_state = NOT_STALLED;
     pipe.mem_stall = 0;
@@ -947,6 +942,7 @@ uint8_t i_cache_load(uint32_t *data)
                 /* load DRAM data into L2 cache and free MSHR */
                 dram_load_block(pipe.instruction_queue[i].address, cache_line);
                 l2_cache_way = cache_find_victim(&pipe.l2_cache, l2_cache_set);
+                l2_writeback_if_dirty(l2_cache_set, l2_cache_way);
                 cache_insert_data(&pipe.l2_cache, l2_cache_set, l2_cache_way, l2_cache_tag,
                                   cache_line);
                 invalidate_mshr(&pipe.l2_cache, pipe.instruction_queue[i].address);
@@ -1091,8 +1087,9 @@ void d_cache_store(uint32_t mem_addr, uint32_t data)
     pipe.l1d_cache.block[l1d_cache_set][l1d_cache_way].data[l1d_cache_offset] = data;
 }
 
-void writeback_if_dirty(uint16_t set, uint16_t way)
+void l1d_writeback_if_dirty(uint16_t set, uint16_t way)
 {
+    // TODO: FIX THIS TO WRITE TO L2 INSTEAD OF DRAM
     if (pipe.l1d_cache.block[set][way].valid && pipe.l1d_cache.block[set][way].dirty)
     {
         pipe.l1d_cache.block[set][way].dirty = 0;
@@ -1104,6 +1101,23 @@ void writeback_if_dirty(uint16_t set, uint16_t way)
         {
             mem_write_32(base_address + (offset << LOG2_WORD_SIZE),
                          pipe.l1d_cache.block[set][way].data[offset]);
+        }
+    }
+}
+
+void l2_writeback_if_dirty(uint16_t set, uint16_t way)
+{
+    if (pipe.l2_cache.block[set][way].valid && pipe.l2_cache.block[set][way].dirty)
+    {
+        pipe.l2_cache.block[set][way].dirty = 0;
+        uint32_t base_address = (pipe.l2_cache.block[set][way].tag << (LOG2_WORD_SIZE +
+                                                                       LOG2_BLOCK_SIZE + L2C_LOG2_NUM_SETS)) +
+                                (set << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE));
+
+        for (uint8_t offset = 0; offset < BLOCK_SIZE; ++offset)
+        {
+            mem_write_32(base_address + (offset << LOG2_WORD_SIZE),
+                         pipe.l2_cache.block[set][way].data[offset]);
         }
     }
 }

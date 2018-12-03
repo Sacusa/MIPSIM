@@ -1,4 +1,5 @@
 #include "dram.h"
+#include "shell.h"
 
 void dram_load_block(uint32_t address, uint32_t *block)
 {
