@@ -12,6 +12,7 @@
 #include "block.h"
 #include "btb_entry.h"
 #include "cache.h"
+#include "dram.h"
 #include "gshare.h"
 #include "instruction_load_status.h"
 #include "shell.h"
@@ -101,12 +102,9 @@ typedef struct Pipe_State {
     /* place other information here as necessary */
 
     /* caches */
-    Cache l1i_cache, l1d_cache;
+    Cache l1i_cache, l1d_cache, l2_cache;
 
     /* cache state info */
-    uint8_t icache_state; /* current state of icache (defined in cache.h) */
-    uint8_t fetch_stall;  /* number of cycles fetch is stalled on I-Cache miss */
-    uint8_t is_fetch_stalled;
     uint8_t dcache_state; /* current state of dcache (defined in cache.h) */
     uint8_t mem_stall;    /* number of cycles memory is stalled on D-Cache miss */
     uint8_t is_mem_stalled;
@@ -145,8 +143,7 @@ void pipe_stage_wb();
 /* called when RUN_BIT is set to 0; frees all structures */
 void pipe_stop();
 
-/* accesses icache and returns the next instruction.
-   On a miss, sets is_fetch_stalled and returns 0. */
+/* accesses the memory (L1I -> L2C -> DRAM) and returns the next instruction. */
 uint8_t i_cache_load(uint32_t *data);
 
 /* accesses dcache and returns the requested data.

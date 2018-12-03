@@ -37,14 +37,11 @@
 #define L2C_NUM_WAYS 16
 #define L2C_NUM_MSHRS 16
 #define L2C_LOG2_NUM_SETS 9
-#define L2C_HIT_LATENCY 14
-
-/* DRAM information */
-#define DRAM_ACCESS_LATENCY 49
+#define L2C_HIT_LATENCY 15
 
 /* transitionary latencies */
-#define L2C_TO_DRAM_LATENCY 4
-#define DRAM_TO_L2C_LATENCY 4
+#define L2C_TO_DRAM_LATENCY 5
+#define DRAM_TO_L2C_LATENCY 5
 
 typedef struct Cache {
     uint16_t NUM_SET, NUM_WAY, NUM_MSHR;
@@ -71,7 +68,10 @@ uint16_t cache_find_victim(Cache *cache, uint16_t set);
 /* make the specified set and way the MRU block and increase LRU values of others */
 void cache_update_lru_state(Cache *cache, uint16_t set, uint16_t way);
 
-/* allocates a new mshr and returns mshr index */
+/* returns the index of a free MSHR entry; if none is free, returns NUM_MSHR */
+uint16_t get_free_mshr_index(Cache *cache);
+
+/* allocates a new mshr and returns mshr index; if no MSHR is available, returns NUM_MSHR */
 uint16_t allocate_mshr(Cache *cache, uint32_t address);
 
 /* sets the done bit in the MSHR corresponding to the given address */

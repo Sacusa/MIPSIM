@@ -96,15 +96,20 @@ void cache_update_lru_state(Cache *cache, uint16_t set, uint16_t way) {
     cache->block[set][way].lru = 0;
 }
 
-uint16_t allocate_mshr(Cache *cache, uint32_t address) {
+uint16_t get_free_mshr_index(Cache *cache) {
     uint16_t mshr_index;
 
-    /* look for an empty MSHR */
     for (mshr_index = 0; mshr_index < cache->NUM_MSHR; ++mshr_index) {
         if (!cache->mshr[mshr_index].valid) {
             break;
         }
     }
+
+    return mshr_index;
+}
+
+uint16_t allocate_mshr(Cache *cache, uint32_t address) {
+    uint16_t mshr_index = get_free_mshr_index(cache);
 
     /* if empty MSHR found, fill it */
     if (mshr_index != cache->NUM_MSHR) {

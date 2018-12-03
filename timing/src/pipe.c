@@ -6,23 +6,24 @@
  * Chris Fallin, 2012
  */
 
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "mips.h"
 #include "pipe.h"
 #include "shell.h"
-#include "mips.h"
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <assert.h>
 
-//#define DEBUG
+/*#define DEBUG
 
 /* debug */
 void print_op(Pipe_Op *op)
 {
     if (op)
         printf("OP (PC=%08x inst=%08x) src1=R%d (%08x) src2=R%d (%08x) dst=R%d valid %d (%08x) br=%d taken=%d dest=%08x mem=%d addr=%08x\n",
-                op->pc, op->instruction, op->reg_src1, op->reg_src1_value, op->reg_src2, op->reg_src2_value, op->reg_dst, op->reg_dst_value_ready,
-                op->reg_dst_value, op->is_branch, op->branch_taken, op->branch_dest, op->is_mem, op->mem_addr);
+               op->pc, op->instruction, op->reg_src1, op->reg_src1_value, op->reg_src2,
+               op->reg_src2_value, op->reg_dst, op->reg_dst_value_ready, op->reg_dst_value,
+               op->is_branch, op->branch_taken, op->branch_dest, op->is_mem, op->mem_addr);
     else
         printf("(null)\n");
 }
@@ -35,26 +36,28 @@ void pipe_init()
     memset(&pipe, 0, sizeof(Pipe_State));
     pipe.PC = 0x00400000;
 
-    // initialize caches
+    /* initialize caches */
     cache_init(&pipe.l1i_cache, L1I_NUM_SETS, L1I_NUM_WAYS, L1I_NUM_MSHRS);
     cache_init(&pipe.l1d_cache, L1D_NUM_SETS, L1D_NUM_WAYS, L1D_NUM_MSHRS);
+    cache_init(&pipe.l2_cache, L2C_NUM_SETS, L2C_NUM_WAYS, L2C_NUM_MSHRS);
 
-    // initialize icache info
+    /* initialize icache info */
     pipe.icache_state = NOT_STALLED;
     pipe.fetch_stall = 0;
     pipe.is_fetch_stalled = 0;
 
-    // initialize dcache info
+    /* initialize dcache info */
     pipe.dcache_state = NOT_STALLED;
     pipe.mem_stall = 0;
     pipe.is_mem_stalled = 0;
 
-    // initialize instruction load queue
+    /* initialize instruction load queue */
     pipe.instruction_queue_size = 4;
-    pipe.instruction_queue = (Instruction_Load_Status*) malloc(pipe.instruction_queue_size * \
-                                                                sizeof(Instruction_Load_Status));
-    
-    for (uint8_t i = 0; i < pipe.instruction_queue_size; ++i) {
+    pipe.instruction_queue = (Instruction_Load_Status *)malloc(pipe.instruction_queue_size *
+                                                               sizeof(Instruction_Load_Status));
+
+    for (uint8_t i = 0; i < pipe.instruction_queue_size; ++i)
+    {
         pipe.instruction_queue[i].valid = 0;
     }
 
@@ -65,10 +68,14 @@ void pipe_cycle()
 {
 #ifdef DEBUG
     printf("\n\n----\n\nPIPELINE:\n");
-    printf("DCODE: "); print_op(pipe.decode_op);
-    printf("EXEC : "); print_op(pipe.execute_op);
-    printf("MEM  : "); print_op(pipe.mem_op);
-    printf("WB   : "); print_op(pipe.wb_op);
+    printf("DCODE: ");
+    print_op(pipe.decode_op);
+    printf("EXEC : ");
+    print_op(pipe.execute_op);
+    printf("MEM  : ");
+    print_op(pipe.mem_op);
+    printf("WB   : ");
+    print_op(pipe.wb_op);
     printf("\n");
 #endif
 
@@ -79,37 +86,39 @@ void pipe_cycle()
     pipe_stage_fetch();
 
     /* handle branch recoveries */
-    if (pipe.branch_recover) {
+    if (pipe.branch_recover)
+    {
 #ifdef DEBUG
-        printf("branch recovery: new dest %08x flush %d stages\n", pipe.branch_dest, pipe.branch_flush);
+        printf("branch recovery: new dest %08x flush %d stages\n", pipe.branch_dest,
+               pipe.branch_flush);
 #endif
-
-        // "unstall" the fetch stage on misprediction
-        // TODO: CHANGE THIS
-        if (pipe.PC != pipe.branch_dest) {
-            pipe.fetch_stall = 0;
-            pipe.is_fetch_stalled = 0;
-        }
-
         pipe.PC = pipe.branch_dest;
 
-        if (pipe.branch_flush >= 2) {
-            if (pipe.decode_op) free(pipe.decode_op);
+        if (pipe.branch_flush >= 2)
+        {
+            if (pipe.decode_op)
+                free(pipe.decode_op);
             pipe.decode_op = NULL;
         }
 
-        if (pipe.branch_flush >= 3) {
-            if (pipe.execute_op) free(pipe.execute_op);
+        if (pipe.branch_flush >= 3)
+        {
+            if (pipe.execute_op)
+                free(pipe.execute_op);
             pipe.execute_op = NULL;
         }
 
-        if (pipe.branch_flush >= 4) {
-            if (pipe.mem_op) free(pipe.mem_op);
+        if (pipe.branch_flush >= 4)
+        {
+            if (pipe.mem_op)
+                free(pipe.mem_op);
             pipe.mem_op = NULL;
         }
 
-        if (pipe.branch_flush >= 5) {
-            if (pipe.wb_op) free(pipe.wb_op);
+        if (pipe.branch_flush >= 5)
+        {
+            if (pipe.wb_op)
+                free(pipe.wb_op);
             pipe.wb_op = NULL;
         }
 
@@ -126,9 +135,12 @@ void pipe_recover(int flush, uint32_t dest)
     /* if there is already a recovery scheduled, it must have come from a later
      * stage (which executes older instructions), hence that recovery overrides
      * our recovery. Simply return in this case. */
-    if (pipe.branch_recover) return;
+    if (pipe.branch_recover)
+        return;
 
-    /* schedule the recovery. This will be done once all pipeline stages simulate the current cycle. */
+    /* schedule the recovery. This will be done once all pipeline stages
+     * simulate the current cycle.
+     */
     pipe.branch_recover = 1;
     pipe.branch_flush = flush;
     pipe.branch_dest = dest;
@@ -145,7 +157,8 @@ void pipe_stage_wb()
     pipe.wb_op = NULL;
 
     /* if this instruction writes a register, do so now */
-    if (op->reg_dst != -1 && op->reg_dst != 0) {
+    if (op->reg_dst != -1 && op->reg_dst != 0)
+    {
         pipe.REGS[op->reg_dst] = op->reg_dst_value;
 #ifdef DEBUG
         printf("R%d = %08x\n", op->reg_dst, op->reg_dst_value);
@@ -153,11 +166,13 @@ void pipe_stage_wb()
     }
 
     /* if this was a syscall, perform action */
-    if (op->opcode == OP_SPECIAL && op->subop == SUBOP_SYSCALL) {
-        if (op->reg_src1_value == 0xA) {
+    if (op->opcode == OP_SPECIAL && op->subop == SUBOP_SYSCALL)
+    {
+        if (op->reg_src1_value == 0xA)
+        {
             pipe.PC = op->pc; /* fetch will do pc += 4, then we stop with correct PC */
             RUN_BIT = 0;
-            pipe_stop();  /* close down pipe and free all structures */
+            pipe_stop(); /* close down pipe and free all structures */
         }
     }
 
@@ -170,7 +185,8 @@ void pipe_stage_wb()
 void pipe_stage_mem()
 {
     /* if a dcache miss is in progress, decrement cycles and return */
-    if (pipe.mem_stall > 0) {
+    if (pipe.mem_stall > 0)
+    {
         pipe.mem_stall--;
         return;
     }
@@ -185,90 +201,107 @@ void pipe_stage_mem()
     uint32_t val = 0;
 
     /* access dcache */
-    if (op->is_mem) {
+    if (op->is_mem)
+    {
         val = d_cache_load(op->mem_addr);
-        if (pipe.is_mem_stalled) {
+        if (pipe.is_mem_stalled)
+        {
             return;
         }
     }
 
-    switch (op->opcode) {
-        case OP_LW:
-        case OP_LH:
-        case OP_LHU:
-        case OP_LB:
-        case OP_LBU:
-            {
-                /* extract needed value */
-                op->reg_dst_value_ready = 1;
-                if (op->opcode == OP_LW) {
-                    op->reg_dst_value = val;
-                }
-                else if (op->opcode == OP_LH || op->opcode == OP_LHU) {
-                    if (op->mem_addr & 2)
-                        val = (val >> 16) & 0xFFFF;
-                    else
-                        val = val & 0xFFFF;
-
-                    if (op->opcode == OP_LH)
-                        val |= (val & 0x8000) ? 0xFFFF8000 : 0;
-
-                    op->reg_dst_value = val;
-                }
-                else if (op->opcode == OP_LB || op->opcode == OP_LBU) {
-                    switch (op->mem_addr & 3) {
-                        case 0:
-                            val = val & 0xFF;
-                            break;
-                        case 1:
-                            val = (val >> 8) & 0xFF;
-                            break;
-                        case 2:
-                            val = (val >> 16) & 0xFF;
-                            break;
-                        case 3:
-                            val = (val >> 24) & 0xFF;
-                            break;
-                    }
-
-                    if (op->opcode == OP_LB)
-                        val |= (val & 0x80) ? 0xFFFFFF80 : 0;
-
-                    op->reg_dst_value = val;
-                }
-            }
-            break;
-
-        case OP_SB:
-            switch (op->mem_addr & 3) {
-                case 0: val = (val & 0xFFFFFF00) | ((op->mem_value & 0xFF) << 0); break;
-                case 1: val = (val & 0xFFFF00FF) | ((op->mem_value & 0xFF) << 8); break;
-                case 2: val = (val & 0xFF00FFFF) | ((op->mem_value & 0xFF) << 16); break;
-                case 3: val = (val & 0x00FFFFFF) | ((op->mem_value & 0xFF) << 24); break;
-            }
-
-            d_cache_store(op->mem_addr & ~3, val);
-            break;
-
-        case OP_SH:
-#ifdef DEBUG
-            printf("SH: addr %08x val %04x old word %08x\n", op->mem_addr, op->mem_value & 0xFFFF, val);
-#endif
+    switch (op->opcode)
+    {
+    case OP_LW:
+    case OP_LH:
+    case OP_LHU:
+    case OP_LB:
+    case OP_LBU:
+    {
+        /* extract needed value */
+        op->reg_dst_value_ready = 1;
+        if (op->opcode == OP_LW)
+        {
+            op->reg_dst_value = val;
+        }
+        else if (op->opcode == OP_LH || op->opcode == OP_LHU)
+        {
             if (op->mem_addr & 2)
-                val = (val & 0x0000FFFF) | (op->mem_value) << 16;
+                val = (val >> 16) & 0xFFFF;
             else
-                val = (val & 0xFFFF0000) | (op->mem_value & 0xFFFF);
+                val = val & 0xFFFF;
+
+            if (op->opcode == OP_LH)
+                val |= (val & 0x8000) ? 0xFFFF8000 : 0;
+
+            op->reg_dst_value = val;
+        }
+        else if (op->opcode == OP_LB || op->opcode == OP_LBU)
+        {
+            switch (op->mem_addr & 3)
+            {
+            case 0:
+                val = val & 0xFF;
+                break;
+            case 1:
+                val = (val >> 8) & 0xFF;
+                break;
+            case 2:
+                val = (val >> 16) & 0xFF;
+                break;
+            case 3:
+                val = (val >> 24) & 0xFF;
+                break;
+            }
+
+            if (op->opcode == OP_LB)
+                val |= (val & 0x80) ? 0xFFFFFF80 : 0;
+
+            op->reg_dst_value = val;
+        }
+    }
+    break;
+
+    case OP_SB:
+        switch (op->mem_addr & 3)
+        {
+        case 0:
+            val = (val & 0xFFFFFF00) | ((op->mem_value & 0xFF) << 0);
+            break;
+        case 1:
+            val = (val & 0xFFFF00FF) | ((op->mem_value & 0xFF) << 8);
+            break;
+        case 2:
+            val = (val & 0xFF00FFFF) | ((op->mem_value & 0xFF) << 16);
+            break;
+        case 3:
+            val = (val & 0x00FFFFFF) | ((op->mem_value & 0xFF) << 24);
+            break;
+        }
+
+        d_cache_store(op->mem_addr & ~3, val);
+        break;
+
+    case OP_SH:
 #ifdef DEBUG
-            printf("new word %08x\n", val);
+        printf("SH: addr %08x val %04x old word %08x\n", op->mem_addr, op->mem_value & 0xFFFF,
+               val);
+#endif
+        if (op->mem_addr & 2)
+            val = (val & 0x0000FFFF) | (op->mem_value) << 16;
+        else
+            val = (val & 0xFFFF0000) | (op->mem_value & 0xFFFF);
+#ifdef DEBUG
+        printf("new word %08x\n", val);
 #endif
 
-            d_cache_store(op->mem_addr & ~3, val);
-            break;
+        d_cache_store(op->mem_addr & ~3, val);
+        break;
 
-        case OP_SW:
-            val = op->mem_value;
-            d_cache_store(op->mem_addr & ~3, val);
-            break;
+    case OP_SW:
+        val = op->mem_value;
+        d_cache_store(op->mem_addr & ~3, val);
+        break;
     }
 
     /* clear stage input and transfer to next stage */
@@ -295,31 +328,37 @@ void pipe_stage_execute()
 
     /* read register values, and check for bypass; stall if necessary */
     int stall = 0;
-    if (op->reg_src1 != -1) {
+    if (op->reg_src1 != -1)
+    {
         if (op->reg_src1 == 0)
             op->reg_src1_value = 0;
-        else if (pipe.mem_op && pipe.mem_op->reg_dst == op->reg_src1) {
+        else if (pipe.mem_op && pipe.mem_op->reg_dst == op->reg_src1)
+        {
             if (!pipe.mem_op->reg_dst_value_ready)
                 stall = 1;
             else
                 op->reg_src1_value = pipe.mem_op->reg_dst_value;
         }
-        else if (pipe.wb_op && pipe.wb_op->reg_dst == op->reg_src1) {
+        else if (pipe.wb_op && pipe.wb_op->reg_dst == op->reg_src1)
+        {
             op->reg_src1_value = pipe.wb_op->reg_dst_value;
         }
         else
             op->reg_src1_value = pipe.REGS[op->reg_src1];
     }
-    if (op->reg_src2 != -1) {
+    if (op->reg_src2 != -1)
+    {
         if (op->reg_src2 == 0)
             op->reg_src2_value = 0;
-        else if (pipe.mem_op && pipe.mem_op->reg_dst == op->reg_src2) {
+        else if (pipe.mem_op && pipe.mem_op->reg_dst == op->reg_src2)
+        {
             if (!pipe.mem_op->reg_dst_value_ready)
                 stall = 1;
             else
                 op->reg_src2_value = pipe.mem_op->reg_dst_value;
         }
-        else if (pipe.wb_op && pipe.wb_op->reg_dst == op->reg_src2) {
+        else if (pipe.wb_op && pipe.wb_op->reg_dst == op->reg_src2)
+        {
             op->reg_src2_value = pipe.wb_op->reg_dst_value;
         }
         else
@@ -328,262 +367,285 @@ void pipe_stage_execute()
 
     /* if bypassing requires a stall (e.g. use immediately after load),
      * return without clearing stage input */
-    if (stall) 
+    if (stall)
         return;
 
     /* execute the op */
-    switch (op->opcode) {
-        case OP_SPECIAL:
-            op->reg_dst_value_ready = 1;
-            switch (op->subop) {
-                case SUBOP_SLL:
-                    op->reg_dst_value = op->reg_src2_value << op->shamt;
-                    break;
-                case SUBOP_SLLV:
-                    op->reg_dst_value = op->reg_src2_value << op->reg_src1_value;
-                    break;
-                case SUBOP_SRL:
-                    op->reg_dst_value = op->reg_src2_value >> op->shamt;
-                    break;
-                case SUBOP_SRLV:
-                    op->reg_dst_value = op->reg_src2_value >> op->reg_src1_value;
-                    break;
-                case SUBOP_SRA:
-                    op->reg_dst_value = (int32_t)op->reg_src2_value >> op->shamt;
-                    break;
-                case SUBOP_SRAV:
-                    op->reg_dst_value = (int32_t)op->reg_src2_value >> op->reg_src1_value;
-                    break;
-                case SUBOP_JR:
-                case SUBOP_JALR:
-                    op->reg_dst_value = op->pc + 4;
-                    op->branch_dest = op->reg_src1_value;
-                    op->branch_taken = 1;
-                    break;
+    switch (op->opcode)
+    {
+    case OP_SPECIAL:
+        op->reg_dst_value_ready = 1;
+        switch (op->subop)
+        {
+        case SUBOP_SLL:
+            op->reg_dst_value = op->reg_src2_value << op->shamt;
+            break;
+        case SUBOP_SLLV:
+            op->reg_dst_value = op->reg_src2_value << op->reg_src1_value;
+            break;
+        case SUBOP_SRL:
+            op->reg_dst_value = op->reg_src2_value >> op->shamt;
+            break;
+        case SUBOP_SRLV:
+            op->reg_dst_value = op->reg_src2_value >> op->reg_src1_value;
+            break;
+        case SUBOP_SRA:
+            op->reg_dst_value = (int32_t)op->reg_src2_value >> op->shamt;
+            break;
+        case SUBOP_SRAV:
+            op->reg_dst_value = (int32_t)op->reg_src2_value >> op->reg_src1_value;
+            break;
+        case SUBOP_JR:
+        case SUBOP_JALR:
+            op->reg_dst_value = op->pc + 4;
+            op->branch_dest = op->reg_src1_value;
+            op->branch_taken = 1;
+            break;
 
-                case SUBOP_MULT:
-                    {
-                        /* we set a result value right away; however, we will
-                         * model a stall if the program tries to read the value
-                         * before it's ready (or overwrite HI/LO). Also, if
-                         * another multiply comes down the pipe later, it will
-                         * update the values and re-set the stall cycle count
-                         * for a new operation.
-                         */
-                        int64_t val = (int64_t)((int32_t)op->reg_src1_value) * (int64_t)((int32_t)op->reg_src2_value);
-                        uint64_t uval = (uint64_t)val;
-                        pipe.HI = (uval >> 32) & 0xFFFFFFFF;
-                        pipe.LO = (uval >>  0) & 0xFFFFFFFF;
+        case SUBOP_MULT:
+        {
+            /* we set a result value right away; however, we will
+             * model a stall if the program tries to read the value
+             * before it's ready (or overwrite HI/LO). Also, if
+             * another multiply comes down the pipe later, it will
+             * update the values and re-set the stall cycle count
+             * for a new operation.
+             */
+            int64_t val = (int64_t)((int32_t)op->reg_src1_value) *
+                          (int64_t)((int32_t)op->reg_src2_value);
+            uint64_t uval = (uint64_t)val;
+            pipe.HI = (uval >> 32) & 0xFFFFFFFF;
+            pipe.LO = (uval >> 0) & 0xFFFFFFFF;
 
-                        /* four-cycle multiplier latency */
-                        pipe.multiplier_stall = 4;
-                    }
-                    break;
-                case SUBOP_MULTU:
-                    {
-                        uint64_t val = (uint64_t)op->reg_src1_value * (uint64_t)op->reg_src2_value;
-                        pipe.HI = (val >> 32) & 0xFFFFFFFF;
-                        pipe.LO = (val >>  0) & 0xFFFFFFFF;
+            /* four-cycle multiplier latency */
+            pipe.multiplier_stall = 4;
+        }
+        break;
+        case SUBOP_MULTU:
+        {
+            uint64_t val = (uint64_t)op->reg_src1_value * (uint64_t)op->reg_src2_value;
+            pipe.HI = (val >> 32) & 0xFFFFFFFF;
+            pipe.LO = (val >> 0) & 0xFFFFFFFF;
 
-                        /* four-cycle multiplier latency */
-                        pipe.multiplier_stall = 4;
-                    }
-                    break;
+            /* four-cycle multiplier latency */
+            pipe.multiplier_stall = 4;
+        }
+        break;
 
-                case SUBOP_DIV:
-                    if (op->reg_src2_value != 0) {
+        case SUBOP_DIV:
+            if (op->reg_src2_value != 0)
+            {
 
-                        int32_t val1 = (int32_t)op->reg_src1_value;
-                        int32_t val2 = (int32_t)op->reg_src2_value;
-                        int32_t div, mod;
+                int32_t val1 = (int32_t)op->reg_src1_value;
+                int32_t val2 = (int32_t)op->reg_src2_value;
+                int32_t div, mod;
 
-                        div = val1 / val2;
-                        mod = val1 % val2;
+                div = val1 / val2;
+                mod = val1 % val2;
 
-                        pipe.LO = div;
-                        pipe.HI = mod;
-                    } else {
-                        // really this would be a div-by-0 exception
-                        pipe.HI = pipe.LO = 0;
-                    }
-
-                    /* 32-cycle divider latency */
-                    pipe.multiplier_stall = 32;
-                    break;
-
-                case SUBOP_DIVU:
-                    if (op->reg_src2_value != 0) {
-                        pipe.HI = (uint32_t)op->reg_src1_value % (uint32_t)op->reg_src2_value;
-                        pipe.LO = (uint32_t)op->reg_src1_value / (uint32_t)op->reg_src2_value;
-                    } else {
-                        /* really this would be a div-by-0 exception */
-                        pipe.HI = pipe.LO = 0;
-                    }
-
-                    /* 32-cycle divider latency */
-                    pipe.multiplier_stall = 32;
-                    break;
-
-                case SUBOP_MFHI:
-                    /* stall until value is ready */
-                    if (pipe.multiplier_stall > 0)
-                        return;
-
-                    op->reg_dst_value = pipe.HI;
-                    break;
-                case SUBOP_MTHI:
-                    /* stall to respect WAW dependence */
-                    if (pipe.multiplier_stall > 0)
-                        return;
-
-                    pipe.HI = op->reg_src1_value;
-                    break;
-
-                case SUBOP_MFLO:
-                    /* stall until value is ready */
-                    if (pipe.multiplier_stall > 0)
-                        return;
-
-                    op->reg_dst_value = pipe.LO;
-                    break;
-                case SUBOP_MTLO:
-                    /* stall to respect WAW dependence */
-                    if (pipe.multiplier_stall > 0)
-                        return;
-
-                    pipe.LO = op->reg_src1_value;
-                    break;
-
-                case SUBOP_ADD:
-                case SUBOP_ADDU:
-                    op->reg_dst_value = op->reg_src1_value + op->reg_src2_value;
-                    break;
-                case SUBOP_SUB:
-                case SUBOP_SUBU:
-                    op->reg_dst_value = op->reg_src1_value - op->reg_src2_value;
-                    break;
-                case SUBOP_AND:
-                    op->reg_dst_value = op->reg_src1_value & op->reg_src2_value;
-                    break;
-                case SUBOP_OR:
-                    op->reg_dst_value = op->reg_src1_value | op->reg_src2_value;
-                    break;
-                case SUBOP_NOR:
-                    op->reg_dst_value = ~(op->reg_src1_value | op->reg_src2_value);
-                    break;
-                case SUBOP_XOR:
-                    op->reg_dst_value = op->reg_src1_value ^ op->reg_src2_value;
-                    break;
-                case SUBOP_SLT:
-                    op->reg_dst_value = ((int32_t)op->reg_src1_value <
-                            (int32_t)op->reg_src2_value) ? 1 : 0;
-                    break;
-                case SUBOP_SLTU:
-                    op->reg_dst_value = (op->reg_src1_value < op->reg_src2_value) ? 1 : 0;
-                    break;
+                pipe.LO = div;
+                pipe.HI = mod;
             }
-            break;
-
-        case OP_BRSPEC:
-            switch (op->subop) {
-                case BROP_BLTZ:
-                case BROP_BLTZAL:
-                    if ((int32_t)op->reg_src1_value < 0) op->branch_taken = 1;
-                    break;
-
-                case BROP_BGEZ:
-                case BROP_BGEZAL:
-                    if ((int32_t)op->reg_src1_value >= 0) op->branch_taken = 1;
-                    break;
+            else
+            {
+                /* really this would be a div-by-0 exception */
+                pipe.HI = pipe.LO = 0;
             }
+
+            /* 32-cycle divider latency */
+            pipe.multiplier_stall = 32;
             break;
 
-        case OP_BEQ:
-            if (op->reg_src1_value == op->reg_src2_value) op->branch_taken = 1;
+        case SUBOP_DIVU:
+            if (op->reg_src2_value != 0)
+            {
+                pipe.HI = (uint32_t)op->reg_src1_value % (uint32_t)op->reg_src2_value;
+                pipe.LO = (uint32_t)op->reg_src1_value / (uint32_t)op->reg_src2_value;
+            }
+            else
+            {
+                /* really this would be a div-by-0 exception */
+                pipe.HI = pipe.LO = 0;
+            }
+
+            /* 32-cycle divider latency */
+            pipe.multiplier_stall = 32;
             break;
 
-        case OP_BNE:
-            if (op->reg_src1_value != op->reg_src2_value) op->branch_taken = 1;
+        case SUBOP_MFHI:
+            /* stall until value is ready */
+            if (pipe.multiplier_stall > 0)
+                return;
+
+            op->reg_dst_value = pipe.HI;
+            break;
+        case SUBOP_MTHI:
+            /* stall to respect WAW dependence */
+            if (pipe.multiplier_stall > 0)
+                return;
+
+            pipe.HI = op->reg_src1_value;
             break;
 
-        case OP_BLEZ:
-            if ((int32_t)op->reg_src1_value <= 0) op->branch_taken = 1;
+        case SUBOP_MFLO:
+            /* stall until value is ready */
+            if (pipe.multiplier_stall > 0)
+                return;
+
+            op->reg_dst_value = pipe.LO;
+            break;
+        case SUBOP_MTLO:
+            /* stall to respect WAW dependence */
+            if (pipe.multiplier_stall > 0)
+                return;
+
+            pipe.LO = op->reg_src1_value;
             break;
 
-        case OP_BGTZ:
-            if ((int32_t)op->reg_src1_value > 0) op->branch_taken = 1;
+        case SUBOP_ADD:
+        case SUBOP_ADDU:
+            op->reg_dst_value = op->reg_src1_value + op->reg_src2_value;
+            break;
+        case SUBOP_SUB:
+        case SUBOP_SUBU:
+            op->reg_dst_value = op->reg_src1_value - op->reg_src2_value;
+            break;
+        case SUBOP_AND:
+            op->reg_dst_value = op->reg_src1_value & op->reg_src2_value;
+            break;
+        case SUBOP_OR:
+            op->reg_dst_value = op->reg_src1_value | op->reg_src2_value;
+            break;
+        case SUBOP_NOR:
+            op->reg_dst_value = ~(op->reg_src1_value | op->reg_src2_value);
+            break;
+        case SUBOP_XOR:
+            op->reg_dst_value = op->reg_src1_value ^ op->reg_src2_value;
+            break;
+        case SUBOP_SLT:
+            op->reg_dst_value = ((int32_t)op->reg_src1_value <
+                                 (int32_t)op->reg_src2_value)
+                                    ? 1
+                                    : 0;
+            break;
+        case SUBOP_SLTU:
+            op->reg_dst_value = (op->reg_src1_value < op->reg_src2_value) ? 1 : 0;
+            break;
+        }
+        break;
+
+    case OP_BRSPEC:
+        switch (op->subop)
+        {
+        case BROP_BLTZ:
+        case BROP_BLTZAL:
+            if ((int32_t)op->reg_src1_value < 0)
+                op->branch_taken = 1;
             break;
 
-        case OP_ADDI:
-        case OP_ADDIU:
-            op->reg_dst_value_ready = 1;
-            op->reg_dst_value = op->reg_src1_value + op->se_imm16;
+        case BROP_BGEZ:
+        case BROP_BGEZAL:
+            if ((int32_t)op->reg_src1_value >= 0)
+                op->branch_taken = 1;
             break;
-        case OP_SLTI:
-            op->reg_dst_value_ready = 1;
-            op->reg_dst_value = (int32_t)op->reg_src1_value < (int32_t)op->se_imm16 ? 1 : 0;
-            break;
-        case OP_SLTIU:
-            op->reg_dst_value_ready = 1;
-            op->reg_dst_value = (uint32_t)op->reg_src1_value < (uint32_t)op->se_imm16 ? 1 : 0;
-            break;
-        case OP_ANDI:
-            op->reg_dst_value_ready = 1;
-            op->reg_dst_value = op->reg_src1_value & op->imm16;
-            break;
-        case OP_ORI:
-            op->reg_dst_value_ready = 1;
-            op->reg_dst_value = op->reg_src1_value | op->imm16;
-            break;
-        case OP_XORI:
-            op->reg_dst_value_ready = 1;
-            op->reg_dst_value = op->reg_src1_value ^ op->imm16;
-            break;
-        case OP_LUI:
-            op->reg_dst_value_ready = 1;
-            op->reg_dst_value = op->imm16 << 16;
-            break;
+        }
+        break;
 
-        case OP_LW:
-        case OP_LH:
-        case OP_LHU:
-        case OP_LB:
-        case OP_LBU:
-            op->mem_addr = op->reg_src1_value + op->se_imm16;
-            break;
+    case OP_BEQ:
+        if (op->reg_src1_value == op->reg_src2_value)
+            op->branch_taken = 1;
+        break;
 
-        case OP_SW:
-        case OP_SH:
-        case OP_SB:
-            op->mem_addr = op->reg_src1_value + op->se_imm16;
-            op->mem_value = op->reg_src2_value;
-            break;
+    case OP_BNE:
+        if (op->reg_src1_value != op->reg_src2_value)
+            op->branch_taken = 1;
+        break;
+
+    case OP_BLEZ:
+        if ((int32_t)op->reg_src1_value <= 0)
+            op->branch_taken = 1;
+        break;
+
+    case OP_BGTZ:
+        if ((int32_t)op->reg_src1_value > 0)
+            op->branch_taken = 1;
+        break;
+
+    case OP_ADDI:
+    case OP_ADDIU:
+        op->reg_dst_value_ready = 1;
+        op->reg_dst_value = op->reg_src1_value + op->se_imm16;
+        break;
+    case OP_SLTI:
+        op->reg_dst_value_ready = 1;
+        op->reg_dst_value = (int32_t)op->reg_src1_value < (int32_t)op->se_imm16 ? 1 : 0;
+        break;
+    case OP_SLTIU:
+        op->reg_dst_value_ready = 1;
+        op->reg_dst_value = (uint32_t)op->reg_src1_value < (uint32_t)op->se_imm16 ? 1 : 0;
+        break;
+    case OP_ANDI:
+        op->reg_dst_value_ready = 1;
+        op->reg_dst_value = op->reg_src1_value & op->imm16;
+        break;
+    case OP_ORI:
+        op->reg_dst_value_ready = 1;
+        op->reg_dst_value = op->reg_src1_value | op->imm16;
+        break;
+    case OP_XORI:
+        op->reg_dst_value_ready = 1;
+        op->reg_dst_value = op->reg_src1_value ^ op->imm16;
+        break;
+    case OP_LUI:
+        op->reg_dst_value_ready = 1;
+        op->reg_dst_value = op->imm16 << 16;
+        break;
+
+    case OP_LW:
+    case OP_LH:
+    case OP_LHU:
+    case OP_LB:
+    case OP_LBU:
+        op->mem_addr = op->reg_src1_value + op->se_imm16;
+        break;
+
+    case OP_SW:
+    case OP_SH:
+    case OP_SB:
+        op->mem_addr = op->reg_src1_value + op->se_imm16;
+        op->mem_value = op->reg_src2_value;
+        break;
     }
 
     /* update branch predictor and perform branch recovery */
-    if (op->is_branch) {
+    if (op->is_branch)
+    {
         /* flush pipeline
          * cond 1: mispredicted direction
          * cond 2: if taken, mispredicted target
          * cond 3: BTB miss
          */
-        if ((op->branch_taken != op->predicted_branch_taken) || \
-            (op->branch_taken && (op->branch_dest != op->predicted_branch_dest)) || \
-            (!op->predicted_is_branch)) {
-            if (op->branch_taken) {
+        if ((op->branch_taken != op->predicted_branch_taken) ||
+            (op->branch_taken && (op->branch_dest != op->predicted_branch_dest)) ||
+            (!op->predicted_is_branch))
+        {
+            if (op->branch_taken)
+            {
                 pipe_recover(3, op->branch_dest);
             }
-            else {
+            else
+            {
                 pipe_recover(3, op->pc + 4);
             }
         }
 
-        // update GHR and PHT for conditional branches
-        if (op->branch_cond) {
+        /* update GHR and PHT for conditional branches */
+        if (op->branch_cond)
+        {
             update_gshare(&pipe.gshare_predictor, op->pc, op->branch_taken);
         }
 
-        // update BTB
+        /* update BTB */
         uint32_t btb_index = get_btb_index(op->pc);
         pipe.BTB[btb_index].address = op->pc;
         pipe.BTB[btb_index].branch_target = op->branch_dest;
@@ -627,107 +689,115 @@ void pipe_stage_decode()
     op->se_imm16 = se_imm16;
     op->shamt = shamt;
 
-    switch (opcode) {
-        case OP_SPECIAL:
-            /* all "SPECIAL" insts are R-types that use the ALU and both source
-             * regs. Set up source regs and immediate value. */
-            op->reg_src1 = rs;
-            op->reg_src2 = rt;
-            op->reg_dst = rd;
-            op->subop = funct2;
-            if (funct2 == SUBOP_SYSCALL) {
-                op->reg_src1 = 2; // v0
-                op->reg_src2 = 3; // v1
-            }
-            if (funct2 == SUBOP_JR || funct2 == SUBOP_JALR) {
-                op->is_branch = 1;
-                op->branch_cond = 0;
-            }
-
-            break;
-
-        case OP_BRSPEC:
-            /* branches that have -and-link variants come here */
+    switch (opcode)
+    {
+    case OP_SPECIAL:
+        /* all "SPECIAL" insts are R-types that use the ALU and both source
+         * regs. Set up source regs and immediate value.
+         */
+        op->reg_src1 = rs;
+        op->reg_src2 = rt;
+        op->reg_dst = rd;
+        op->subop = funct2;
+        if (funct2 == SUBOP_SYSCALL)
+        {
+            op->reg_src1 = 2; // v0
+            op->reg_src2 = 3; // v1
+        }
+        if (funct2 == SUBOP_JR || funct2 == SUBOP_JALR)
+        {
             op->is_branch = 1;
-            op->reg_src1 = rs;
-            op->reg_src2 = rt;
-            op->is_branch = 1;
-            op->branch_cond = 1; /* conditional branch */
-            op->branch_dest = op->pc + 4 + (se_imm16 << 2);
-            op->subop = rt;
-            if (rt == BROP_BLTZAL || rt == BROP_BGEZAL) {
-                /* link reg */
-                op->reg_dst = 31;
-                op->reg_dst_value = op->pc + 4;
-                op->reg_dst_value_ready = 1;
-            }
-            break;
+            op->branch_cond = 0;
+        }
 
-        case OP_JAL:
+        break;
+
+    case OP_BRSPEC:
+        /* branches that have -and-link variants come here */
+        op->is_branch = 1;
+        op->reg_src1 = rs;
+        op->reg_src2 = rt;
+        op->is_branch = 1;
+        op->branch_cond = 1; /* conditional branch */
+        op->branch_dest = op->pc + 4 + (se_imm16 << 2);
+        op->subop = rt;
+        if (rt == BROP_BLTZAL || rt == BROP_BGEZAL)
+        {
+            /* link reg */
             op->reg_dst = 31;
             op->reg_dst_value = op->pc + 4;
             op->reg_dst_value_ready = 1;
-            op->branch_taken = 1;
-            /* fallthrough */
-        case OP_J:
-            op->is_branch = 1;
-            op->branch_cond = 0;
-            op->branch_taken = 1;
-            op->branch_dest = (op->pc & 0xF0000000) | targ;
-            break;
+        }
+        break;
 
-        case OP_BEQ:
-        case OP_BNE:
-        case OP_BLEZ:
-        case OP_BGTZ:
-            /* ordinary conditional branches (resolved after execute) */
-            op->is_branch = 1;
-            op->branch_cond = 1;
-            op->branch_dest = op->pc + 4 + (se_imm16 << 2);
-            op->reg_src1 = rs;
+    case OP_JAL:
+        op->reg_dst = 31;
+        op->reg_dst_value = op->pc + 4;
+        op->reg_dst_value_ready = 1;
+        op->branch_taken = 1;
+        /* fallthrough */
+    case OP_J:
+        op->is_branch = 1;
+        op->branch_cond = 0;
+        op->branch_taken = 1;
+        op->branch_dest = (op->pc & 0xF0000000) | targ;
+        break;
+
+    case OP_BEQ:
+    case OP_BNE:
+    case OP_BLEZ:
+    case OP_BGTZ:
+        /* ordinary conditional branches (resolved after execute) */
+        op->is_branch = 1;
+        op->branch_cond = 1;
+        op->branch_dest = op->pc + 4 + (se_imm16 << 2);
+        op->reg_src1 = rs;
+        op->reg_src2 = rt;
+        break;
+
+    case OP_ADDI:
+    case OP_ADDIU:
+    case OP_SLTI:
+    case OP_SLTIU:
+        /* I-type ALU ops with sign-extended immediates */
+        op->reg_src1 = rs;
+        op->reg_dst = rt;
+        break;
+
+    case OP_ANDI:
+    case OP_ORI:
+    case OP_XORI:
+    case OP_LUI:
+        /* I-type ALU ops with non-sign-extended immediates */
+        op->reg_src1 = rs;
+        op->reg_dst = rt;
+        break;
+
+    case OP_LW:
+    case OP_LH:
+    case OP_LHU:
+    case OP_LB:
+    case OP_LBU:
+    case OP_SW:
+    case OP_SH:
+    case OP_SB:
+        /* memory ops */
+        op->is_mem = 1;
+        op->reg_src1 = rs;
+        if (opcode == OP_LW || opcode == OP_LH || opcode == OP_LHU || opcode == OP_LB ||
+            opcode == OP_LBU)
+        {
+            /* load */
+            op->mem_write = 0;
+            op->reg_dst = rt;
+        }
+        else
+        {
+            /* store */
+            op->mem_write = 1;
             op->reg_src2 = rt;
-            break;
-
-        case OP_ADDI:
-        case OP_ADDIU:
-        case OP_SLTI:
-        case OP_SLTIU:
-            /* I-type ALU ops with sign-extended immediates */
-            op->reg_src1 = rs;
-            op->reg_dst = rt;
-            break;
-
-        case OP_ANDI:
-        case OP_ORI:
-        case OP_XORI:
-        case OP_LUI:
-            /* I-type ALU ops with non-sign-extended immediates */
-            op->reg_src1 = rs;
-            op->reg_dst = rt;
-            break;
-
-        case OP_LW:
-        case OP_LH:
-        case OP_LHU:
-        case OP_LB:
-        case OP_LBU:
-        case OP_SW:
-        case OP_SH:
-        case OP_SB:
-            /* memory ops */
-            op->is_mem = 1;
-            op->reg_src1 = rs;
-            if (opcode == OP_LW || opcode == OP_LH || opcode == OP_LHU || opcode == OP_LB || opcode == OP_LBU) {
-                /* load */
-                op->mem_write = 0;
-                op->reg_dst = rt;
-            }
-            else {
-                /* store */
-                op->mem_write = 1;
-                op->reg_src2 = rt;
-            }
-            break;
+        }
+        break;
     }
 
     /* we will handle reg-read together with bypass in the execute stage */
@@ -739,26 +809,23 @@ void pipe_stage_decode()
 void pipe_stage_fetch()
 {
     /* if execution halted, increment PC and return */
-    if (!RUN_BIT) {
+    if (!RUN_BIT)
+    {
         pipe.PC += 4;
         return;
     }
 
-    /* if an icache miss is in progress, decrement cycles and return */
-    if (pipe.fetch_stall > 0) {
-        pipe.fetch_stall--;
-        return;
-    }
-    
-    /* if pipeline is stalled (our output slot is not empty), return */
-    if (pipe.decode_op != NULL) {
-        return;
-    }
-    
-    uint32_t next_instruction = i_cache_load();
+    uint32_t next_instruction;
 
-    /* return on cache miss */
-    if (pipe.is_fetch_stalled) {
+    /* if our request has not been served, return */
+    if (i_cache_load(&next_instruction) == CACHE_DATA_UNAVAILABLE)
+    {
+        return;
+    }
+
+    /* if pipeline is stalled (our output slot is not empty), return */
+    if (pipe.decode_op != NULL)
+    {
         return;
     }
 
@@ -780,109 +847,190 @@ void pipe_stop()
 {
     cache_destroy(&pipe.l1i_cache);
     cache_destroy(&pipe.l1d_cache);
+    cache_destroy(&pipe.l2_cache);
 }
 
 uint8_t i_cache_load(uint32_t *data)
 {
     uint8_t return_val = CACHE_DATA_UNAVAILABLE;
+    uint8_t iq_index;
+    uint8_t free_iq_index = pipe.instruction_queue_size;
 
-    // assign an instruction queue index to the current PC
+    /* search instruction load queue to check if a request has already been made */
+    for (iq_index = 0; iq_index < pipe.instruction_queue_size; ++iq_index)
+    {
+        if (pipe.instruction_queue[iq_index].address == pipe.PC)
+        {
+            break;
+        }
 
-    for (uint8_t i = 0; i < pipe.instruction_queue_size; ++i) {
-        switch (pipe.instruction_queue[i].current_state) {
-            case STALLED_ON_DRAM:
-                /* next state: STALLED_ON_DRAM_RESPONSE
-                 * stall: DRAM_TO_L2C_LATENCY
-                 * update mshr
-                 */
-                break;
-            case STALLED_ON_DRAM_REQUEST:
-                /* next_state: STALLED_ON_DRAM
-                 * stall: DRAM_ACCESS_LATENCY
-                 */
-                break;
-            case STALLED_ON_DRAM_RESPONSE:
-                /* next_state: NOT_STALLED
-                 * stall: 0
-                 * fill into L2C
-                 * free MSHR
-                 * if i == index of PC entry
-                 *   fill into L1I
-                 *   update 'data'
-                 *   return_val = CACHE_DATA_AVAILABLE
-                 */
-                break;
-            case STALLED_ON_L2C_HIT:
-                /* next_state: NOT_STALLED
-                 * stall: 0
-                 * if i == index of PC entry
-                 *   fill into L1I
-                 *   update 'data'
-                 *   return_val = CACHE_DATA_AVAILABLE
-                 */
-                break;
-            case NOT_STALLED:
-                /* access L1I
-                * if L1I miss
-                *   access L2C
-                *   if L2C miss
-                *     create MSHR entry
-                *     next_state: STALLED_ON_DRAM_REQUEST
-                *     stall: L2C_TO_DRAM_LATENCY
-                *     return CACHE_DATA_UNAVAILABLE
-                *   else
-                *     next_state: STALLED_ON_L2C_HIT
-                *     stall: L2C_HIT_LATENCY
-                *     return CACHE_DATA_UNAVAILABLE
-                * else
-                *   update 'data'
-                *   return CACHE_DATA_AVAILABLE
-                */
-                break;
+        /* concurrently look for a free index in case we need a new entry */
+        if (!pipe.instruction_queue[iq_index].valid)
+        {
+            free_iq_index = iq_index;
         }
     }
-}
 
-uint8_t l1i_cache_load(uint32_t *data)
-{
-    uint32_t l1i_cache_tag = pipe.PC >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1I_LOG2_NUM_SETS);
-    uint16_t l1i_cache_set = (pipe.PC >> (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) & (L1I_NUM_SETS - 1);
-    uint8_t l1i_cache_offset = (pipe.PC >> LOG2_WORD_SIZE) & (BLOCK_SIZE - 1);
-    uint16_t l1i_cache_way = cache_get_way(&pipe.l1i_cache, l1i_cache_set, l1i_cache_tag);
+    /* if entry does not exist, create a new one */
+    if (iq_index == pipe.instruction_queue_size)
+    {
+        if (free_iq_index == pipe.instruction_queue_size)
+        {
+            /* no free entry found
+             * resize the instruction load queue (double it)
+             */
+            pipe.instruction_queue_size *= 2;
+            pipe.instruction_queue = (Instruction_Load_Status *)realloc(pipe.instruction_queue,
+                                                                        pipe.instruction_queue_size * sizeof(Instruction_Load_Status));
+        }
 
-    /* serve L1I cache miss */
-    if (pipe.is_fetch_stalled) {
-        pipe.is_fetch_stalled = 0;
+        pipe.instruction_queue[free_iq_index].valid = 1;
+        pipe.instruction_queue[free_iq_index].address = pipe.PC;
+        pipe.instruction_queue[free_iq_index].current_state = NOT_STALLED;
+        pipe.instruction_queue[free_iq_index].stall = 0;
 
-        /* access main memory */
-        uint32_t l1i_cache_data[BLOCK_SIZE];
-        // uint32_t address_mask = 0xffffffff << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE);
-        // for (uint8_t index = 0; index < BLOCK_SIZE; ++index) {
-        //     l1i_cache_data[index] = mem_read_32((pipe.PC & address_mask) + \
-        //                                         (index << LOG2_WORD_SIZE));
-        // }
-
-        /* access L2 cache */
-        // TODO
-        
-        l1i_cache_way = cache_find_victim(&pipe.l1i_cache, l1i_cache_set);
-        cache_insert_data(&pipe.l1i_cache, l1i_cache_set, l1i_cache_way, l1i_cache_tag, \
-                          l1i_cache_data);
+        iq_index = free_iq_index;
     }
 
-    /* stall on L1I cache miss */
-    /* return error code on L1I miss */
-    if (l1i_cache_way == pipe.l1i_cache.NUM_WAY) {
-        pipe.fetch_stall = L1I_MISS_STALL_CYCLE_COUNT;
-        pipe.is_fetch_stalled = 1;
-        return 0;
-    }
-    /* update LRU state on hit */
-    else {
-        cache_update_lru_state(&pipe.l1i_cache, l1i_cache_set, l1i_cache_way);
-    }
+    /* a cache line to pass data around */
+    uint32_t cache_line[BLOCK_SIZE];
 
-    return pipe.l1i_cache.block[l1i_cache_set][l1i_cache_way].data[l1i_cache_offset];
+    for (uint8_t i = 0; i < pipe.instruction_queue_size; ++i)
+    {
+        if (pipe.instruction_queue[i].valid)
+        {
+            pipe.instruction_queue[i].stall -= (pipe.instruction_queue[i].stall ? 1 : 0);
+
+            /* nothing to do if stalled */
+            if (pipe.instruction_queue[i].stall)
+            {
+                continue;
+            }
+
+            /* L1I cache access paramters */
+            uint32_t l1i_cache_tag = pipe.instruction_queue[i].address >>
+                                     (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1I_LOG2_NUM_SETS);
+            uint16_t l1i_cache_set = (pipe.instruction_queue[i].address >>
+                                      (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) &
+                                     (L1I_NUM_SETS - 1);
+            uint8_t l1i_cache_offset = (pipe.instruction_queue[i].address >> LOG2_WORD_SIZE) &
+                                       (BLOCK_SIZE - 1);
+            uint16_t l1i_cache_way = cache_get_way(&pipe.l1i_cache, l1i_cache_set, l1i_cache_tag);
+
+            /* L2 cache access paramters */
+            uint32_t l2_cache_tag = pipe.instruction_queue[i].address >>
+                                    (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L2C_LOG2_NUM_SETS);
+            uint16_t l2_cache_set = (pipe.instruction_queue[i].address >>
+                                     (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) &
+                                    (L2C_NUM_SETS - 1);
+            uint8_t l2_cache_offset = (pipe.instruction_queue[i].address >> LOG2_WORD_SIZE) &
+                                      (BLOCK_SIZE - 1);
+            uint16_t l2_cache_way = cache_get_way(&pipe.l2_cache, l2_cache_set, l2_cache_tag);
+
+            switch (pipe.instruction_queue[i].current_state)
+            {
+            case STALLED_ON_DRAM:
+                pipe.instruction_queue[i].current_state = STALLED_ON_DRAM_RESPONSE;
+                pipe.instruction_queue[i].stall = DRAM_TO_L2C_LATENCY;
+                mark_mshr_done(&pipe.l2_cache, pipe.instruction_queue[i].address);
+                break;
+
+            case STALLED_ON_DRAM_REQUEST:
+                pipe.instruction_queue[i].current_state = STALLED_ON_DRAM;
+                pipe.instruction_queue[i].stall = DRAM_ACCESS_LATENCY;
+                break;
+
+            case STALLED_ON_DRAM_RESPONSE:
+                /* free instruction load queue entry */
+                pipe.instruction_queue[i].valid = 0;
+
+                /* load DRAM data into L2 cache and free MSHR */
+                dram_load_block(pipe.instruction_queue[i].address, cache_line);
+                l2_cache_way = cache_find_victim(&pipe.l2_cache, l2_cache_set);
+                cache_insert_data(&pipe.l2_cache, l2_cache_set, l2_cache_way, l2_cache_tag,
+                                  cache_line);
+                invalidate_mshr(&pipe.l2_cache, pipe.instruction_queue[i].address);
+
+                /* if pipeline stalled on this data: */
+                if (i == iq_index)
+                {
+                    /* load into L1I cache */
+                    l1i_cache_way = cache_find_victim(&pipe.l1i_cache, l1i_cache_set);
+                    cache_insert_data(&pipe.l1i_cache, l1i_cache_set, l1i_cache_way,
+                                      l1i_cache_tag, cache_line);
+
+                    /* update data and return_val */
+                    *data =
+                        pipe.l1i_cache.block[l1i_cache_set][l1i_cache_way].data[l1i_cache_offset];
+                    return_val = CACHE_DATA_AVAILABLE;
+                }
+
+                break;
+
+            case STALLED_ON_L2C_HIT:
+                /* free instruction load queue entry */
+                pipe.instruction_queue[i].valid = 0;
+
+                cache_update_lru_state(&pipe.l2_cache, l2_cache_set, l2_cache_way);
+
+                /* if pipeline stalled on this data: */
+                if (i == iq_index)
+                {
+                    /* load into L1I cache */
+                    for (uint8_t index = 0; index < BLOCK_SIZE; ++index)
+                    {
+                        cache_line[index] =
+                            pipe.l2_cache.block[l2_cache_set][l2_cache_way].data[index];
+                    }
+                    l1i_cache_way = cache_find_victim(&pipe.l1i_cache, l1i_cache_set);
+                    cache_insert_data(&pipe.l1i_cache, l1i_cache_set, l1i_cache_way,
+                                      l1i_cache_tag, cache_line);
+
+                    /* update data and return_val */
+                    *data =
+                        pipe.l1i_cache.block[l1i_cache_set][l1i_cache_way].data[l1i_cache_offset];
+                    return_val = CACHE_DATA_AVAILABLE;
+                }
+
+                break;
+
+            case NOT_STALLED:
+                /* L1I cache miss? */
+                if (l1i_cache_way == pipe.l1i_cache.NUM_WAY)
+                {
+                    if (get_free_mshr_index(&pipe.l2_cache) != pipe.l2_cache.NUM_MSHR)
+                    {
+                        /* L2 cache miss? */
+                        if (l2_cache_way == pipe.l2_cache.NUM_WAY)
+                        {
+                            allocate_mshr(&pipe.l2_cache, pipe.instruction_queue[i].address);
+                            pipe.instruction_queue[i].current_state = STALLED_ON_DRAM_REQUEST;
+                            pipe.instruction_queue[i].stall = L2C_TO_DRAM_LATENCY;
+                        }
+                        else
+                        {
+                            pipe.instruction_queue[i].current_state = STALLED_ON_L2C_HIT;
+                            pipe.instruction_queue[i].stall = L2C_HIT_LATENCY;
+                        }
+                    }
+
+                    /* if L2 cache MSHR not free, can't do anything */
+                }
+                else
+                {
+                    /* free instruction load queue entry */
+                    pipe.instruction_queue[i].valid = 0;
+
+                    cache_update_lru_state(&pipe.l1i_cache, l1i_cache_set, l1i_cache_way);
+                    *data =
+                        pipe.l1i_cache.block[l1i_cache_set][l1i_cache_way].data[l1i_cache_offset];
+                    return_val = CACHE_DATA_AVAILABLE;
+                }
+
+                break;
+            }
+        }
+    }
 }
 
 uint32_t d_cache_load(uint32_t mem_addr)
@@ -894,7 +1042,8 @@ uint32_t d_cache_load(uint32_t mem_addr)
     uint16_t l1d_cache_way = cache_get_way(&pipe.l1d_cache, l1d_cache_set, l1d_cache_tag);
 
     /* serve L1D cache miss */
-    if (pipe.is_mem_stalled) {
+    if (pipe.is_mem_stalled)
+    {
         pipe.is_mem_stalled = 0;
         l1d_cache_way = cache_find_victim(&pipe.l1d_cache, l1d_cache_set);
 
@@ -904,23 +1053,26 @@ uint32_t d_cache_load(uint32_t mem_addr)
         /* access main memory */
         uint32_t l1d_cache_data[BLOCK_SIZE];
         uint32_t address_mask = 0xffffffff << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE);
-        for (uint8_t index = 0; index < BLOCK_SIZE; ++index) {
-            l1d_cache_data[index] = mem_read_32((mem_addr & address_mask) + \
+        for (uint8_t index = 0; index < BLOCK_SIZE; ++index)
+        {
+            l1d_cache_data[index] = mem_read_32((mem_addr & address_mask) +
                                                 (index << LOG2_WORD_SIZE));
         }
-        
-        cache_insert_data(&pipe.l1d_cache, l1d_cache_set, l1d_cache_way, l1d_cache_tag, \
+
+        cache_insert_data(&pipe.l1d_cache, l1d_cache_set, l1d_cache_way, l1d_cache_tag,
                           l1d_cache_data);
     }
 
     /* stall on L1D cache miss */
-    if (l1d_cache_way == pipe.l1d_cache.NUM_WAY) {
+    if (l1d_cache_way == pipe.l1d_cache.NUM_WAY)
+    {
         pipe.mem_stall = L1D_MISS_STALL_CYCLE_COUNT;
         pipe.is_mem_stalled = 1;
         return 0;
     }
     /* update LRU state on hit */
-    else {
+    else
+    {
         cache_update_lru_state(&pipe.l1d_cache, l1d_cache_set, l1d_cache_way);
     }
 
@@ -941,14 +1093,16 @@ void d_cache_store(uint32_t mem_addr, uint32_t data)
 
 void writeback_if_dirty(uint16_t set, uint16_t way)
 {
-    if (pipe.l1d_cache.block[set][way].valid && pipe.l1d_cache.block[set][way].dirty) {
+    if (pipe.l1d_cache.block[set][way].valid && pipe.l1d_cache.block[set][way].dirty)
+    {
         pipe.l1d_cache.block[set][way].dirty = 0;
-        uint32_t base_address = (pipe.l1d_cache.block[set][way].tag << \
-                                 (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L1D_LOG2_NUM_SETS)) + \
+        uint32_t base_address = (pipe.l1d_cache.block[set][way].tag << (LOG2_WORD_SIZE +
+                                                                        LOG2_BLOCK_SIZE + L1D_LOG2_NUM_SETS)) +
                                 (set << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE));
 
-        for (uint8_t offset = 0; offset < BLOCK_SIZE; ++offset) {
-            mem_write_32(base_address + (offset << LOG2_WORD_SIZE), \
+        for (uint8_t offset = 0; offset < BLOCK_SIZE; ++offset)
+        {
+            mem_write_32(base_address + (offset << LOG2_WORD_SIZE),
                          pipe.l1d_cache.block[set][way].data[offset]);
         }
     }
@@ -958,7 +1112,8 @@ void init_branch_pred()
 {
     init_gshare(&pipe.gshare_predictor);
 
-    for (int i = 0; i < BTB_SIZE; ++i) {
+    for (int i = 0; i < BTB_SIZE; ++i)
+    {
         pipe.BTB[i].address = 0;
         pipe.BTB[i].branch_target = 0;
         pipe.BTB[i].valid = 0;
@@ -973,17 +1128,19 @@ uint32_t get_btb_index(uint32_t PC)
 
 uint32_t predict_next_PC(Pipe_Op *op)
 {
-    uint32_t next_PC = pipe.PC + 4;  // default next predicted PC value
+    uint32_t next_PC = pipe.PC + 4; /* default next predicted PC value */
     op->predicted_branch_taken = 0;
     op->predicted_is_branch = 0;
-    
+
     uint32_t btb_index = get_btb_index(pipe.PC);
     uint32_t pht_index = get_pht_index(&pipe.gshare_predictor, pipe.PC);
 
-    if ((pipe.BTB[btb_index].address == pipe.PC) && pipe.BTB[btb_index].valid) {
+    if ((pipe.BTB[btb_index].address == pipe.PC) && pipe.BTB[btb_index].valid)
+    {
         op->predicted_is_branch = 1;
-        
-        if (pipe.BTB[btb_index].is_unconditional || (pipe.gshare_predictor.PHT[pht_index] > 1)) {
+
+        if (pipe.BTB[btb_index].is_unconditional || (pipe.gshare_predictor.PHT[pht_index] > 1))
+        {
             next_PC = pipe.BTB[btb_index].branch_target;
             op->predicted_branch_taken = 1;
         }
