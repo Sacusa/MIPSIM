@@ -9,6 +9,10 @@
 #define WORD_SIZE 4
 #define LOG2_WORD_SIZE 2
 
+/* cache types */
+#define IS_L1I_CACHE 0
+#define IS_L1D_CACHE 1
+
 /* cache access return code */
 #define CACHE_DATA_AVAILABLE 0
 #define CACHE_DATA_UNAVAILABLE 1

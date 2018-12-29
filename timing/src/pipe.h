@@ -14,7 +14,7 @@
 #include "cache.h"
 #include "dram.h"
 #include "gshare.h"
-#include "instruction_load_status.h"
+#include "memory_load_request.h"
 #include "shell.h"
 
 #define BTB_SIZE 1024
@@ -119,7 +119,9 @@ typedef struct Pipe_State
 
     /* load/store queues */
     uint8_t instruction_queue_size;
-    Instruction_Load_Status *instruction_queue;
+    uint8_t data_queue_size;
+    Memory_Load_Request *instruction_queue;
+    Memory_Load_Request *data_queue;
 
 } Pipe_State;
 
@@ -150,9 +152,8 @@ void pipe_stop();
 /* accesses the memory (L1I -> L2C -> DRAM) and returns the next instruction. */
 uint8_t i_cache_load(uint32_t *data);
 
-/* accesses dcache and returns the requested data.
- * On a miss, sets is_mem_stalled and returns 0. */
-uint32_t d_cache_load(uint32_t mem_addr);
+/* accesses the memory (L1D -> L2C -> DRAM) and returns the requested data. */
+uint8_t d_cache_load(uint32_t mem_addr, uint32_t *data);
 
 /* write the given data into corresponding cache block */
 void d_cache_store(uint32_t mem_addr, uint32_t data);
