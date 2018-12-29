@@ -65,15 +65,20 @@ uint16_t cache_get_way(Cache *cache, uint16_t set, uint32_t tag)
 }
 
 void cache_insert_data(Cache *cache, uint16_t set, uint16_t way, uint32_t tag,
-                       uint32_t data[BLOCK_SIZE])
+                       uint32_t data[BLOCK_SIZE], uint8_t update_lru)
 {
     cache->block[set][way].valid = 1;
     cache->block[set][way].dirty = 0;
     cache->block[set][way].tag = tag;
-    cache_update_lru_state(cache, set, way);
+
     for (uint8_t offset = 0; offset < BLOCK_SIZE; ++offset)
     {
         cache->block[set][way].data[offset] = data[offset];
+    }
+
+    if (update_lru == UPDATE_LRU)
+    {
+        cache_update_lru_state(cache, set, way);
     }
 }
 

@@ -976,7 +976,7 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
                 l2_cache_way = cache_find_victim(&pipe.l2_cache, l2_cache_set);
                 l2_writeback_if_dirty(l2_cache_set, l2_cache_way);
                 cache_insert_data(&pipe.l2_cache, l2_cache_set, l2_cache_way, l2_cache_tag,
-                                  cache_line);
+                                  cache_line, UPDATE_LRU);
                 invalidate_mshr(&pipe.l2_cache, *load_queue[i].address);
 
                 /* if pipeline stalled on this data: */
@@ -988,7 +988,7 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
                         l1d_writeback_if_dirty(l1_cache_set, l1_cache_way);
                     }
                     cache_insert_data(l1_cache, l1_cache_set, l1_cache_way,
-                                      l1_cache_tag, cache_line);
+                                      l1_cache_tag, cache_line, UPDATE_LRU);
 
                     /* update data and return_val */
                     *data =
@@ -1013,14 +1013,14 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
                         cache_line[index] =
                             pipe.l2_cache.block[l2_cache_set][l2_cache_way].data[index];
                     }
-                    
+
                     l1_cache_way = cache_find_victim(l1_cache, l1_cache_set);
                     if (cache == IS_L1D_CACHE)
                     {
                         l1d_writeback_if_dirty(l1_cache_set, l1_cache_way);
                     }
                     cache_insert_data(l1_cache, l1_cache_set, l1_cache_way,
-                                      l1_cache_tag, cache_line);
+                                      l1_cache_tag, cache_line, UPDATE_LRU);
 
                     /* update data and return_val */
                     *data =
@@ -1093,19 +1093,32 @@ void d_cache_store(uint32_t mem_addr, uint32_t data)
 
 void l1d_writeback_if_dirty(uint16_t set, uint16_t way)
 {
-    // TODO: FIX THIS TO WRITE TO L2 INSTEAD OF DRAM
     if (pipe.l1d_cache.block[set][way].valid && pipe.l1d_cache.block[set][way].dirty)
     {
-        pipe.l1d_cache.block[set][way].dirty = 0;
         uint32_t base_address = (pipe.l1d_cache.block[set][way].tag << (LOG2_WORD_SIZE +
                                                                         LOG2_BLOCK_SIZE + L1D_LOG2_NUM_SETS)) +
                                 (set << (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE));
 
-        for (uint8_t offset = 0; offset < BLOCK_SIZE; ++offset)
+        /* L2 cache access parameters */
+        uint32_t l2_cache_tag = base_address >>
+                                (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L2C_LOG2_NUM_SETS);
+        uint16_t l2_cache_set = (base_address >>
+                                 (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) &
+                                (L2C_NUM_SETS - 1);
+        uint16_t l2_cache_way = cache_get_way(&pipe.l2_cache, l2_cache_set, l2_cache_tag);
+
+        /* allocate L2 cache line on miss */
+        if (l2_cache_way == pipe.l2_cache.NUM_WAY)
         {
-            mem_write_32(base_address + (offset << LOG2_WORD_SIZE),
-                         pipe.l1d_cache.block[set][way].data[offset]);
+            l2_cache_way = cache_find_victim(&pipe.l2_cache, l2_cache_set);
+            l2_writeback_if_dirty(l2_cache_set, l2_cache_way);
         }
+
+        cache_insert_data(&pipe.l2_cache, l2_cache_set, l2_cache_way, l2_cache_tag,
+                          pipe.l1d_cache.block[set][way], NO_UPDATE_LRU);
+
+        pipe.l2_cache.block[l2_cache_set][l2_cache_way].dirty = 1;
+        pipe.l1d_cache.block[set][way].dirty = 0;
     }
 }
 

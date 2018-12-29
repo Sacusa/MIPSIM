@@ -47,6 +47,10 @@
 #define L2C_TO_DRAM_LATENCY 5
 #define DRAM_TO_L2C_LATENCY 5
 
+/* possible options during cache insertion */
+#define UPDATE_LRU 1
+#define NO_UPDATE_LRU 0
+
 typedef struct Cache
 {
     uint16_t NUM_SET, NUM_WAY, NUM_MSHR;
@@ -65,7 +69,7 @@ uint16_t cache_get_way(Cache *cache, uint16_t set, uint32_t tag);
 
 /* insert data into the specified set and way and update LRU state */
 void cache_insert_data(Cache *cache, uint16_t set, uint16_t way, uint32_t tag,
-                       uint32_t data[BLOCK_SIZE]);
+                       uint32_t data[BLOCK_SIZE], uint8_t update_lru);
 
 /* find victim for replacement */
 uint16_t cache_find_victim(Cache *cache, uint16_t set);
