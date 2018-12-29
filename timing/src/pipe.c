@@ -886,13 +886,13 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
     /* search load queue to check if a request has already been made */
     for (lq_index = 0; lq_index < *load_queue_size; ++lq_index)
     {
-        if (*load_queue[lq_index].address == address)
+        if ((*load_queue)[lq_index].address == address)
         {
             break;
         }
 
         /* concurrently look for a free index in case we need a new entry */
-        if (!*load_queue[lq_index].valid)
+        if (!(*load_queue)[lq_index].valid)
         {
             free_lq_index = lq_index;
         }
@@ -911,10 +911,10 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
                                                          *load_queue_size * sizeof(Memory_Load_Request));
         }
 
-        *load_queue[free_lq_index].valid = 1;
-        *load_queue[free_lq_index].address = address;
-        *load_queue[free_lq_index].current_state = NOT_STALLED;
-        *load_queue[free_lq_index].stall = 0;
+        (*load_queue)[free_lq_index].valid = 1;
+        (*load_queue)[free_lq_index].address = address;
+        (*load_queue)[free_lq_index].current_state = NOT_STALLED;
+        (*load_queue)[free_lq_index].stall = 0;
 
         lq_index = free_lq_index;
     }
@@ -924,60 +924,60 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
 
     for (uint8_t i = 0; i < *load_queue_size; ++i)
     {
-        if (*load_queue[i].valid)
+        if ((*load_queue)[i].valid)
         {
-            *load_queue[i].stall -= (*load_queue[i].stall ? 1 : 0);
+            (*load_queue)[i].stall -= ((*load_queue)[i].stall ? 1 : 0);
 
             /* nothing to do if stalled */
-            if (*load_queue[i].stall)
+            if ((*load_queue)[i].stall)
             {
                 continue;
             }
 
             /* L1I cache access paramters */
-            uint32_t l1_cache_tag = *load_queue[i].address >>
+            uint32_t l1_cache_tag = (*load_queue)[i].address >>
                                     (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + l1_log2_num_sets);
-            uint16_t l1_cache_set = (*load_queue[i].address >>
+            uint16_t l1_cache_set = ((*load_queue)[i].address >>
                                      (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) &
                                     (l1_num_sets - 1);
-            uint8_t l1_cache_offset = (*load_queue[i].address >> LOG2_WORD_SIZE) &
+            uint8_t l1_cache_offset = ((*load_queue)[i].address >> LOG2_WORD_SIZE) &
                                       (BLOCK_SIZE - 1);
             uint16_t l1_cache_way = cache_get_way(l1_cache, l1_cache_set, l1_cache_tag);
 
             /* L2 cache access paramters */
-            uint32_t l2_cache_tag = *load_queue[i].address >>
+            uint32_t l2_cache_tag = (*load_queue)[i].address >>
                                     (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE + L2C_LOG2_NUM_SETS);
-            uint16_t l2_cache_set = (*load_queue[i].address >>
+            uint16_t l2_cache_set = ((*load_queue)[i].address >>
                                      (LOG2_WORD_SIZE + LOG2_BLOCK_SIZE)) &
                                     (L2C_NUM_SETS - 1);
-            uint8_t l2_cache_offset = (*load_queue[i].address >> LOG2_WORD_SIZE) &
+            uint8_t l2_cache_offset = ((*load_queue)[i].address >> LOG2_WORD_SIZE) &
                                       (BLOCK_SIZE - 1);
             uint16_t l2_cache_way = cache_get_way(&pipe.l2_cache, l2_cache_set, l2_cache_tag);
 
-            switch (*load_queue[i].current_state)
+            switch ((*load_queue)[i].current_state)
             {
             case STALLED_ON_DRAM:
-                *load_queue[i].current_state = STALLED_ON_DRAM_RESPONSE;
-                *load_queue[i].stall = DRAM_TO_L2C_LATENCY;
-                mark_mshr_done(&pipe.l2_cache, *load_queue[i].address);
+                (*load_queue)[i].current_state = STALLED_ON_DRAM_RESPONSE;
+                (*load_queue)[i].stall = DRAM_TO_L2C_LATENCY;
+                mark_mshr_done(&pipe.l2_cache, (*load_queue)[i].address);
                 break;
 
             case STALLED_ON_DRAM_REQUEST:
-                *load_queue[i].current_state = STALLED_ON_DRAM;
-                *load_queue[i].stall = DRAM_ACCESS_LATENCY;
+                (*load_queue)[i].current_state = STALLED_ON_DRAM;
+                (*load_queue)[i].stall = DRAM_ACCESS_LATENCY;
                 break;
 
             case STALLED_ON_DRAM_RESPONSE:
                 /* free instruction load queue entry */
-                *load_queue[i].valid = 0;
+                (*load_queue)[i].valid = 0;
 
                 /* load DRAM data into L2 cache and free MSHR */
-                dram_load_block(*load_queue[i].address, cache_line);
+                dram_load_block((*load_queue)[i].address, cache_line);
                 l2_cache_way = cache_find_victim(&pipe.l2_cache, l2_cache_set);
                 l2_writeback_if_dirty(l2_cache_set, l2_cache_way);
                 cache_insert_data(&pipe.l2_cache, l2_cache_set, l2_cache_way, l2_cache_tag,
                                   cache_line, UPDATE_LRU);
-                invalidate_mshr(&pipe.l2_cache, *load_queue[i].address);
+                invalidate_mshr(&pipe.l2_cache, (*load_queue)[i].address);
 
                 /* if pipeline stalled on this data: */
                 if (i == lq_index)
@@ -992,7 +992,7 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
 
                     /* update data and return_val */
                     *data =
-                        *l1_cache.block[l1_cache_set][l1_cache_way].data[l1_cache_offset];
+                        (*l1_cache).block[l1_cache_set][l1_cache_way].data[l1_cache_offset];
                     return_val = CACHE_DATA_AVAILABLE;
                 }
 
@@ -1000,7 +1000,7 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
 
             case STALLED_ON_L2C_HIT:
                 /* free instruction load queue entry */
-                *load_queue[i].valid = 0;
+                (*load_queue)[i].valid = 0;
 
                 cache_update_lru_state(&pipe.l2_cache, l2_cache_set, l2_cache_way);
 
@@ -1024,7 +1024,7 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
 
                     /* update data and return_val */
                     *data =
-                        *l1_cache.block[l1_cache_set][l1_cache_way].data[l1_cache_offset];
+                        (*l1_cache).block[l1_cache_set][l1_cache_way].data[l1_cache_offset];
                     return_val = CACHE_DATA_AVAILABLE;
                 }
 
@@ -1032,21 +1032,21 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
 
             case NOT_STALLED:
                 /* L1I cache miss? */
-                if (l1_cache_way == *l1_cache.NUM_WAY)
+                if (l1_cache_way == (*l1_cache).NUM_WAY)
                 {
                     if (get_free_mshr_index(&pipe.l2_cache) != pipe.l2_cache.NUM_MSHR)
                     {
                         /* L2 cache miss? */
                         if (l2_cache_way == pipe.l2_cache.NUM_WAY)
                         {
-                            allocate_mshr(&pipe.l2_cache, *load_queue[i].address);
-                            *load_queue[i].current_state = STALLED_ON_DRAM_REQUEST;
-                            *load_queue[i].stall = L2C_TO_DRAM_LATENCY;
+                            allocate_mshr(&pipe.l2_cache, (*load_queue)[i].address);
+                            (*load_queue)[i].current_state = STALLED_ON_DRAM_REQUEST;
+                            (*load_queue)[i].stall = L2C_TO_DRAM_LATENCY;
                         }
                         else
                         {
-                            *load_queue[i].current_state = STALLED_ON_L2C_HIT;
-                            *load_queue[i].stall = L2C_HIT_LATENCY;
+                            (*load_queue)[i].current_state = STALLED_ON_L2C_HIT;
+                            (*load_queue)[i].stall = L2C_HIT_LATENCY;
                         }
                     }
 
@@ -1055,11 +1055,11 @@ uint8_t l1_cache_load(uint32_t address, uint8_t cache, uint32_t *data)
                 else
                 {
                     /* free instruction load queue entry */
-                    *load_queue[i].valid = 0;
+                    (*load_queue)[i].valid = 0;
 
                     cache_update_lru_state(l1_cache, l1_cache_set, l1_cache_way);
                     *data =
-                        *l1_cache.block[l1_cache_set][l1_cache_way].data[l1_cache_offset];
+                        (*l1_cache).block[l1_cache_set][l1_cache_way].data[l1_cache_offset];
                     return_val = CACHE_DATA_AVAILABLE;
                 }
 
@@ -1115,7 +1115,7 @@ void l1d_writeback_if_dirty(uint16_t set, uint16_t way)
         }
 
         cache_insert_data(&pipe.l2_cache, l2_cache_set, l2_cache_way, l2_cache_tag,
-                          pipe.l1d_cache.block[set][way], NO_UPDATE_LRU);
+                          pipe.l1d_cache.block[set][way].data, NO_UPDATE_LRU);
 
         pipe.l2_cache.block[l2_cache_set][l2_cache_way].dirty = 1;
         pipe.l1d_cache.block[set][way].dirty = 0;
